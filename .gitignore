@@ -1,0 +1,10 @@
+__pycache__/
+*.pyc
+logs/
+*.log
+.venv/
+.env
+color.jpg
+depth.jpg
+realsense_color.jpg
+realsense_depth.jpg
