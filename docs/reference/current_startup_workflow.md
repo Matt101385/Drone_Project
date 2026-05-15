@@ -55,13 +55,13 @@ Short form:
 Current npm website folder:
 
 ```text
-/home/matt/my-app
+/home/matt/matt_drone/my-app
 ```
 
 Short form:
 
 ```bash
-~/my-app
+~/matt_drone/my-app
 ```
 
 GitHub repository:
@@ -104,13 +104,17 @@ If the Pi IP changes, replace `10.0.0.105` with the current Pi IP.
 
 ## Website Startup
 
-The npm website is separate from the Python vision program.
+The npm website is stored in:
 
-Start it with:
+```text
+~/matt_drone/my-app
+```
+
+To start only the web interface, use:
 
 ```bash
-cd ~/my-app
-npm run dev
+cd ~/matt_drone/my-app
+npm run dev:web
 ```
 
 Open:
@@ -119,7 +123,21 @@ Open:
 http://127.0.0.1:3000
 ```
 
-If opening the website from another computer instead of directly on the Pi, replace `127.0.0.1` with the Raspberry Pi IP address if the dev server allows network access.
+The `npm run dev` command currently starts both `dev:web` and `dev:camera`. If `dev:camera` still points to an old Python path, `npm run dev` will fail and stop the web server.
+
+Known old broken camera command from `package.json`:
+
+```text
+/home/matt/follow_project/.venv/bin/python /home/matt/follow_project/stream_mjpeg_yolo.py
+```
+
+The camera command should be updated to the current project path before using full `npm run dev`:
+
+```text
+/home/matt/matt_drone/follow_project/.venv/bin/python /home/matt/matt_drone/follow_project/07_latest_yolo_person_follow_click_target_stream.py
+```
+
+Until that package script is updated, use `npm run dev:web` for the website and start the Python vision program separately.
 
 ## Pixhawk Heartbeat Check
 
@@ -155,11 +173,11 @@ source .venv/bin/activate
 python 07_latest_yolo_person_follow_click_target_stream.py
 ```
 
-2. NPM website:
+2. NPM website only:
 
 ```bash
-cd ~/my-app
-npm run dev
+cd ~/matt_drone/my-app
+npm run dev:web
 ```
 
 3. Pixhawk heartbeat check:
@@ -193,7 +211,7 @@ models/labelmap.txt
 Current website folder:
 
 ```text
-~/my-app
+~/matt_drone/my-app
 ```
 
 Reference documentation:
@@ -289,7 +307,13 @@ It should be started inside:
 The npm website runs from:
 
 ```text
-~/my-app
+~/matt_drone/my-app
+```
+
+Start the website only with:
+
+```text
+npm run dev:web
 ```
 
 The Pixhawk heartbeat check runs inside:
