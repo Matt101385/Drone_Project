@@ -93,48 +93,6 @@ npm version: 9.2.0
 /usr/local/lib/librealsense2.so.2.56
 ```
 
-## Commands to Collect Version Information
-
-Run this on the Pi 5 and paste the output into ChatGPT when this file needs to be updated:
-
-```bash
-cd ~/matt_drone/follow_project
-source .venv/bin/activate
-
-printf '\n--- System ---\n'
-cat /proc/device-tree/model 2>/dev/null || true
-cat /etc/os-release
-uname -a
-
-printf '\n--- Python ---\n'
-which python
-python -V
-python -m pip --version
-
-printf '\n--- Python packages ---\n'
-python - <<'PY'
-mods = ['cv2', 'ultralytics', 'torch', 'torchvision', 'numpy', 'flask']
-for m in mods:
-    try:
-        mod = __import__(m)
-        print(f'{m}:', getattr(mod, '__version__', 'import ok'))
-    except Exception as e:
-        print(f'{m}: ERROR {e}')
-try:
-    import pyrealsense2 as rs
-    print('pyrealsense2: import ok')
-except Exception as e:
-    print('pyrealsense2: ERROR', e)
-PY
-
-printf '\n--- RealSense files ---\n'
-ls -l /usr/local/lib/python3.13/dist-packages | grep pyrealsense || true
-ls -l /usr/local/lib | grep librealsense || true
-
-printf '\n--- Node / npm ---\n'
-node -v 2>/dev/null || true
-npm -v 2>/dev/null || true
-```
 
 ## Known Notes
 
