@@ -76,9 +76,19 @@ Expected Python environment:
 
 If `which python` shows `/usr/bin/python`, the virtual environment is not active correctly.
 
-## Web Stream
+## Website / Web Stream
 
-After the program starts, open the Flask stream in a browser using the Raspberry Pi IP address.
+The website is served by the current Python program through Flask. There is no separate website startup command for the current workflow.
+
+Start the website by starting the main program:
+
+```bash
+cd ~/matt_drone/follow_project
+source .venv/bin/activate
+python 07_latest_yolo_person_follow_click_target_stream.py
+```
+
+After the program is running, open the stream in a browser using the Raspberry Pi IP address.
 
 Known example:
 
@@ -87,6 +97,14 @@ http://10.0.0.105:5000
 ```
 
 If the Pi IP changes, replace `10.0.0.105` with the current Pi IP.
+
+If the website does not open:
+
+1. Confirm the Python program is still running in the terminal.
+2. Confirm the Raspberry Pi and browser computer are on the same network.
+3. Confirm the current Pi IP address.
+4. Confirm the Flask port in the Python code is still `5000`.
+5. Try opening the stream again with `http://<current-pi-ip>:5000`.
 
 ## Important Project Files
 
@@ -131,7 +149,7 @@ When a new script becomes the latest startup program, update this document in th
 2. `Runtime Entry Point`.
 3. `What This Program Does`, if the behavior changed.
 4. `Important Project Files`, if new required files were added.
-5. `Web Stream`, if the port or URL pattern changed.
+5. `Website / Web Stream`, if the port, URL pattern, or website startup method changed.
 
 Do not add package versions here. Put version changes in:
 
@@ -189,7 +207,7 @@ It should be started inside:
 .venv
 ```
 
-It opens a browser-accessible stream, usually at:
+The website / stream starts from the same Python program and is usually opened at:
 
 ```text
 http://10.0.0.105:5000
