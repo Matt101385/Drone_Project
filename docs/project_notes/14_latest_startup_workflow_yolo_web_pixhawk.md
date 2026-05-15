@@ -1,4 +1,4 @@
-# 14 Latest Startup Workflow: YOLO, Web, and Pixhawk
+# 14 New Startup Workflow: YOLO, Web, and Pixhawk
 
 ## Purpose
 
