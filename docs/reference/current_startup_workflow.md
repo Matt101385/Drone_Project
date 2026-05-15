@@ -55,13 +55,13 @@ Short form:
 Current npm website folder:
 
 ```text
-/home/matt/matt_drone/my-app
+/home/matt/my-app
 ```
 
 Short form:
 
 ```bash
-~/matt_drone/my-app
+~/my-app
 ```
 
 GitHub repository:
@@ -102,38 +102,50 @@ http://10.0.0.105:5000
 
 If the Pi IP changes, replace `10.0.0.105` with the current Pi IP.
 
-## NPM Website Startup
+## Website Startup
 
-The npm website is separate from the Python vision program. Start it from the `my-app` folder.
+The npm website is separate from the Python vision program.
 
-Use this command group:
-
-```bash
-cd ~/matt_drone/my-app
-npm install
-npm run dev -- --host 0.0.0.0
-```
-
-`npm install` is mainly needed the first time, after pulling a new version, or after `package.json` changes. For normal daily startup, this is usually enough:
+Start it with:
 
 ```bash
-cd ~/matt_drone/my-app
-npm run dev -- --host 0.0.0.0
+cd ~/my-app
+npm run dev
 ```
 
-If this is a Vite app, the default browser URL is usually:
+Open:
 
 ```text
-http://10.0.0.105:5173
+http://127.0.0.1:3000
 ```
 
-Use the exact URL printed by the npm terminal if it shows a different port.
+If opening the website from another computer instead of directly on the Pi, replace `127.0.0.1` with the Raspberry Pi IP address if the dev server allows network access.
 
-Typical Vite output includes a local URL and a network URL. To open the website from another computer, use the network URL or replace the host with the current Pi IP address.
+## Pixhawk Heartbeat Check
+
+Use this check to confirm the Pi can communicate with Pixhawk through MAVLink.
+
+Start MAVProxy with:
+
+```bash
+cd ~
+source ~/px4env/bin/activate
+mavproxy.py --master=/dev/serial0 --baudrate 57600
+```
+
+Success output should include:
+
+```text
+Detected vehicle 1:1 on link 0
+online system 1
+Mode LOITER
+```
+
+If this heartbeat does not appear, check Pixhawk power, serial wiring, baudrate, and the `/dev/serial0` device path.
 
 ## Startup Order
 
-For the full current workflow, start these in separate terminals:
+For the full current workflow, start these in separate terminals as needed:
 
 1. Python vision program:
 
@@ -146,18 +158,24 @@ python 07_latest_yolo_person_follow_click_target_stream.py
 2. NPM website:
 
 ```bash
-cd ~/matt_drone/my-app
-npm run dev -- --host 0.0.0.0
+cd ~/my-app
+npm run dev
+```
+
+3. Pixhawk heartbeat check:
+
+```bash
+cd ~
+source ~/px4env/bin/activate
+mavproxy.py --master=/dev/serial0 --baudrate 57600
 ```
 
 Then open the relevant browser pages:
 
 ```text
 Flask stream: http://10.0.0.105:5000
-NPM website:  http://10.0.0.105:5173
+NPM website:  http://127.0.0.1:3000
 ```
-
-If either port changes, use the URL printed by that terminal.
 
 ## Important Project Files
 
@@ -175,7 +193,7 @@ models/labelmap.txt
 Current website folder:
 
 ```text
-~/matt_drone/my-app
+~/my-app
 ```
 
 Reference documentation:
@@ -209,7 +227,8 @@ When a new script becomes the latest startup program, update this document in th
 3. `What This Program Does`, if the behavior changed.
 4. `Important Project Files`, if new required files were added.
 5. `Flask Video Stream`, if the Python stream port or URL pattern changed.
-6. `NPM Website Startup`, if the website folder, command, or port changed.
+6. `Website Startup`, if the website folder, command, or port changed.
+7. `Pixhawk Heartbeat Check`, if the MAVLink device, baudrate, or success output changed.
 
 Do not add package versions here. Put version changes in:
 
@@ -270,14 +289,20 @@ It should be started inside:
 The npm website runs from:
 
 ```text
-~/matt_drone/my-app
+~/my-app
+```
+
+The Pixhawk heartbeat check runs inside:
+
+```text
+~/px4env
 ```
 
 The common browser URLs are:
 
 ```text
 Flask stream: http://10.0.0.105:5000
-NPM website:  http://10.0.0.105:5173
+NPM website:  http://127.0.0.1:3000
 ```
 
 Use `docs/reference/` for current working references. Use `docs/project_notes/` for historical progress notes. Use `archive/experiments/` for old scripts that are no longer the current startup program.
