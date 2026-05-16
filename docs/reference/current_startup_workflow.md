@@ -1,6 +1,6 @@
 # Current Startup Workflow
 
-Last updated: 2026-05-15
+Last updated: 2026-05-16
 
 ## Purpose
 
@@ -14,7 +14,7 @@ docs/reference/pi5_environment_reference.md
 
 ## Current Main Program
 
-Use this file as the current latest runtime program:
+Use this file as the current latest Python runtime program:
 
 ```text
 07_latest_yolo_person_follow_click_target_stream.py
@@ -30,17 +30,17 @@ The historical name should only be used when reading old notes or archived exper
 
 ## What This Program Does
 
-The current main program is responsible for:
+The current main Python program is responsible for:
 
 - Reading frames from the RealSense camera.
 - Running YOLO-based person detection.
-- Providing a Flask video stream.
+- Providing a camera/video stream backend.
 - Supporting click-target / person-following style interaction.
 - Acting as the current practical entry point for the drone vision workflow.
 
-## Project Location
+## Project Locations
 
-Current Raspberry Pi 5 vision project folder:
+Current Raspberry Pi 5 Python vision project folder:
 
 ```text
 /home/matt/matt_drone/follow_project
@@ -52,7 +52,7 @@ Short form:
 ~/matt_drone/follow_project
 ```
 
-Current npm website folder:
+Current local dashboard website folder:
 
 ```text
 /home/matt/matt_drone/my-app
@@ -70,9 +70,11 @@ GitHub repository:
 Matt101385/Drone_Project
 ```
 
+Important Git note: `follow_project` and `my-app` are currently separate local Git folders. `follow_project` is the main project that is synced with GitHub. `my-app` has a local commit for the dashboard prototype, but it should not be pushed until the repository structure is intentionally reorganized.
+
 ## Python Vision Program Startup
 
-Use this command group when starting the current vision program:
+Use this command group when starting only the current Python vision program:
 
 ```bash
 cd ~/matt_drone/follow_project
@@ -88,29 +90,31 @@ Expected Python environment:
 
 If `which python` shows `/usr/bin/python`, the virtual environment is not active correctly.
 
-## Flask Video Stream
+## Dashboard Website Startup
 
-The Python vision program also provides a Flask video stream.
-
-After the Python program is running, open the stream in a browser using the Raspberry Pi IP address.
-
-Known example:
-
-```text
-http://10.0.0.105:5000
-```
-
-If the Pi IP changes, replace `10.0.0.105` with the current Pi IP.
-
-## Website Startup
-
-The npm website is stored in:
+The npm website/dashboard is stored in:
 
 ```text
 ~/matt_drone/my-app
 ```
 
-To start only the web interface, use:
+Current package script rule:
+
+```text
+npm run dev      = start website only
+npm run dev:web  = start website only
+npm run dev:all  = start website + Python camera backend
+npm run dev:camera = start Python camera backend only
+```
+
+To start only the web interface:
+
+```bash
+cd ~/matt_drone/my-app
+npm run dev
+```
+
+Equivalent explicit command:
 
 ```bash
 cd ~/matt_drone/my-app
@@ -123,21 +127,63 @@ Open:
 http://127.0.0.1:3000
 ```
 
-The `npm run dev` command currently starts both `dev:web` and `dev:camera`. If `dev:camera` still points to an old Python path, `npm run dev` will fail and stop the web server.
-
-Known old broken camera command from `package.json`:
+From another device on the same network, replace `127.0.0.1` with the Raspberry Pi IP address:
 
 ```text
-/home/matt/follow_project/.venv/bin/python /home/matt/follow_project/stream_mjpeg_yolo.py
+http://<pi-ip-address>:3000
 ```
 
-The camera command should be updated to the current project path before using full `npm run dev`:
+## Website Plus Camera Backend Startup
+
+To start both the dashboard website and the Python camera backend together:
+
+```bash
+cd ~/matt_drone/my-app
+npm run dev:all
+```
+
+Current `dev:camera` target:
 
 ```text
 /home/matt/matt_drone/follow_project/.venv/bin/python /home/matt/matt_drone/follow_project/07_latest_yolo_person_follow_click_target_stream.py
 ```
 
-Until that package script is updated, use `npm run dev:web` for the website and start the Python vision program separately.
+This means `npm run dev:all` depends on the Python virtual environment and current main program in `~/matt_drone/follow_project`.
+
+## Dashboard Camera API
+
+The dashboard proxies camera traffic through Next.js API routes.
+
+Current frontend/backend route relationship:
+
+```text
+Dashboard image source: /api/realsense
+Next.js stream proxy:  http://127.0.0.1:8000/stream
+Click target proxy:    http://127.0.0.1:8000/select_target
+```
+
+If the website shows an error like:
+
+```text
+connect ECONNREFUSED 127.0.0.1:8000
+```
+
+that means the website is running, but the Python camera backend is not running or is not listening on port `8000`.
+
+Fix by starting the backend:
+
+```bash
+cd ~/matt_drone/follow_project
+source .venv/bin/activate
+python 07_latest_yolo_person_follow_click_target_stream.py
+```
+
+or start both services together from the website folder:
+
+```bash
+cd ~/matt_drone/my-app
+npm run dev:all
+```
 
 ## Pixhawk Heartbeat Check
 
@@ -163,9 +209,11 @@ If this heartbeat does not appear, check Pixhawk power, serial wiring, baudrate,
 
 ## Startup Order
 
-For the full current workflow, start these in separate terminals as needed:
+For the full current workflow, start these as needed.
 
-1. Python vision program:
+Option A: Start Python and website separately in two terminals.
+
+Terminal 1, Python vision backend:
 
 ```bash
 cd ~/matt_drone/follow_project
@@ -173,14 +221,21 @@ source .venv/bin/activate
 python 07_latest_yolo_person_follow_click_target_stream.py
 ```
 
-2. NPM website only:
+Terminal 2, website only:
 
 ```bash
 cd ~/matt_drone/my-app
-npm run dev:web
+npm run dev
 ```
 
-3. Pixhawk heartbeat check:
+Option B: Start website and Python camera backend together:
+
+```bash
+cd ~/matt_drone/my-app
+npm run dev:all
+```
+
+Optional Pixhawk heartbeat check:
 
 ```bash
 cd ~
@@ -188,16 +243,18 @@ source ~/px4env/bin/activate
 mavproxy.py --master=/dev/serial0 --baudrate 57600
 ```
 
-Then open the relevant browser pages:
+Common browser pages:
 
 ```text
-Flask stream: http://10.0.0.105:5000
-NPM website:  http://127.0.0.1:3000
+Dashboard website: http://127.0.0.1:3000
+Camera backend:    http://127.0.0.1:8000/stream
 ```
+
+If accessing from another device on the same network, replace `127.0.0.1` with the Pi IP address.
 
 ## Important Project Files
 
-Current runtime files:
+Current Python runtime files:
 
 ```text
 07_latest_yolo_person_follow_click_target_stream.py
@@ -208,10 +265,15 @@ models/detect.tflite
 models/labelmap.txt
 ```
 
-Current website folder:
+Current dashboard files in `~/matt_drone/my-app`:
 
 ```text
-~/matt_drone/my-app
+app/page.tsx
+app/StreamViewer.tsx
+app/api/realsense/route.ts
+app/api/realsense/select-target/route.ts
+system.ts
+package.json
 ```
 
 Reference documentation:
@@ -244,9 +306,10 @@ When a new script becomes the latest startup program, update this document in th
 2. `Python Vision Program Startup`.
 3. `What This Program Does`, if the behavior changed.
 4. `Important Project Files`, if new required files were added.
-5. `Flask Video Stream`, if the Python stream port or URL pattern changed.
-6. `Website Startup`, if the website folder, command, or port changed.
-7. `Pixhawk Heartbeat Check`, if the MAVLink device, baudrate, or success output changed.
+5. `Dashboard Camera API`, if the Python stream port or URL pattern changed.
+6. `Dashboard Website Startup`, if the website folder, command, or port changed.
+7. `Website Plus Camera Backend Startup`, if the npm scripts change.
+8. `Pixhawk Heartbeat Check`, if the MAVLink device, baudrate, or success output changed.
 
 Do not add package versions here. Put version changes in:
 
@@ -258,14 +321,19 @@ docs/reference/pi5_environment_reference.md
 
 GitHub does not update automatically after editing local files on the Pi 5.
 
-After making a code or documentation change, save it with:
+When Matt changes code, startup commands, project paths, package scripts, or reference documentation, Codex should remind Matt if the change should be saved to GitHub. Codex should explain what should be committed and why, then wait for Matt's approval before committing or pushing.
+
+For `follow_project`, after Matt approves a GitHub update, save it with:
 
 ```bash
+cd ~/matt_drone/follow_project
 git status
-git add .
+git add <changed-files>
 git commit -m "Describe the change"
 git push origin main
 ```
+
+For `my-app`, do not push to GitHub yet. It currently has a local dashboard prototype commit, but the repository structure should be reorganized before publishing it to the shared GitHub repository.
 
 Runtime files should stay local and should not be committed.
 
@@ -286,7 +354,7 @@ models/test.jpg
 
 ## Short Project Summary
 
-The current vision entry point is:
+The current Python vision entry point is:
 
 ```text
 07_latest_yolo_person_follow_click_target_stream.py
@@ -304,7 +372,7 @@ It should be started inside:
 .venv
 ```
 
-The npm website runs from:
+The dashboard website runs from:
 
 ```text
 ~/matt_drone/my-app
@@ -313,7 +381,13 @@ The npm website runs from:
 Start the website only with:
 
 ```text
-npm run dev:web
+npm run dev
+```
+
+Start website plus Python camera backend with:
+
+```text
+npm run dev:all
 ```
 
 The Pixhawk heartbeat check runs inside:
@@ -325,8 +399,8 @@ The Pixhawk heartbeat check runs inside:
 The common browser URLs are:
 
 ```text
-Flask stream: http://10.0.0.105:5000
-NPM website:  http://127.0.0.1:3000
+Dashboard website: http://127.0.0.1:3000
+Camera backend:    http://127.0.0.1:8000/stream
 ```
 
 Use `docs/reference/` for current working references. Use `docs/project_notes/` for historical progress notes. Use `archive/experiments/` for old scripts that are no longer the current startup program.
