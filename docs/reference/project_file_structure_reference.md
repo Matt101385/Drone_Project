@@ -91,16 +91,25 @@ Purpose:
 
 Important model files may appear in the project root or inside `models/`, depending on the script history. The preferred direction is to keep model assets in `models/` when practical.
 
-Important files:
+Current primary YOLO model:
 
 ```text
 yolo11n.pt
 models/yolo11n.pt
+```
+
+`yolo11n.pt` is the model to keep for the current GitHub showcase version.
+
+Removed from GitHub showcase:
+
+```text
 yolov8n.pt
 models/yolov8n.pt
 ```
 
-YOLO `.pt` files are used by current or historical YOLO detection scripts.
+`yolov8n.pt` was an older YOLO model used for comparison/history. It should not be treated as a required GitHub project file. If needed, keep it only as a local backup outside the showcase path.
+
+Legacy experiment model files:
 
 ```text
 models/detect.tflite
