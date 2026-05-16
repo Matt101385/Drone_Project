@@ -259,11 +259,20 @@ Current Python runtime files:
 ```text
 07_latest_yolo_person_follow_click_target_stream.py
 realsense_reader_module.py
+yolo11n.pt
 models/yolo11n.pt
-models/yolov8n.pt
 models/detect.tflite
 models/labelmap.txt
 ```
+
+Removed from GitHub showcase:
+
+```text
+yolov8n.pt
+models/yolov8n.pt
+```
+
+`yolov8n.pt` was an older YOLO model used for comparison/history. It should not be treated as a required startup file for the current GitHub showcase version.
 
 Current dashboard files in `~/matt_drone/my-app`:
 
@@ -370,6 +379,12 @@ It should be started inside:
 
 ```text
 .venv
+```
+
+The current GitHub showcase YOLO model is:
+
+```text
+yolo11n.pt
 ```
 
 The dashboard website runs from:
