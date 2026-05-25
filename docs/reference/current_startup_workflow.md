@@ -1,67 +1,61 @@
 # Current Startup Workflow
 
-Last updated: 2026-05-16
+Last updated: 2026-05-24
 
 ## Purpose
 
-This document summarizes the current way to start and maintain the drone project. It is not a full environment record and does not duplicate hardware or package version details.
-
-For Pi 5 system versions, Python package versions, and RealSense installation details, use:
-
-```text
-docs/reference/pi5_environment_reference.md
-```
+This document summarizes the current startup workflow for the Raspberry Pi 5 drone follow project. It focuses on what to run and in what order. For package versions, RealSense installation details, and hardware references, use the other files in `docs/reference/`.
 
 ## Current Main Program
 
-Use this file as the current latest Python runtime program:
+Use this file as the current real-follow safety entry point:
+
+```text
+scripts/11_follow_safe.py
+```
+
+This is the current main program for:
+
+- RealSense color/depth capture.
+- YOLO person detection.
+- WebRTC video stream on port `8080`.
+- Click-to-select target.
+- Dry follow command preview by default.
+- Optional real Pixhawk control with `FOLLOW_REAL=1`.
+- Safety supervision through `scripts/safety_supervisor_v2.py`.
+
+## Active Scripts
 
 ```text
 scripts/07_latest_yolo_person_follow_click_target_stream.py
 ```
 
-Historical name before cleanup:
+Validated MJPEG click-target stream. Keep it as a known-good visual baseline and website/backend compatibility script.
 
 ```text
-stream_mjpeg_yolo.py
+scripts/10_webrtc_follow_udp_test.py
 ```
 
-The historical name should only be used when reading old notes or archived experiments.
+WebRTC follow/UDP intermediate validation script.
 
-## What This Program Does
+```text
+scripts/11_follow_safe.py
+```
 
-The current main Python program is responsible for:
+Current main WebRTC + safety follow script.
 
-- Reading frames from the RealSense camera.
-- Running YOLO-based person detection.
-- Providing a camera/video stream backend.
-- Supporting click-target / person-following style interaction.
-- Acting as the current practical entry point for the drone vision workflow.
+```text
+scripts/12_takeoff_hover_land_test.py
+```
+
+PX4/MAVSDK takeoff, hover, and land smoke test. Run this before any real follow testing.
 
 ## Project Locations
 
-Current Raspberry Pi 5 Python vision project folder:
+Current Raspberry Pi 5 Python project folder:
 
 ```text
-/home/matt/matt_drone/follow_project
-```
-
-Short form:
-
-```bash
 ~/matt_drone/follow_project
-```
-
-Current local dashboard website folder:
-
-```text
-/home/matt/matt_drone/my-app
-```
-
-Short form:
-
-```bash
-~/matt_drone/my-app
 ```
 
 GitHub repository:
@@ -70,27 +64,146 @@ GitHub repository:
 Matt101385/Drone_Project
 ```
 
-Important Git note: `follow_project` and `my-app` are currently separate local Git folders. `follow_project` is the main project that is synced with GitHub. `my-app` has a local commit for the dashboard prototype, but it should not be pushed until the repository structure is intentionally reorganized.
+Current dashboard website prototype:
 
-## Python Vision Program Startup
+```text
+~/matt_drone/my-app
+```
 
-Use this command group when starting only the current Python vision program:
+`my-app` is still a separate local dashboard prototype. Do not push it until the repository is intentionally reorganized.
+
+## Development Network
+
+Use normal Wi-Fi while developing or copying files:
+
+```text
+Pi IP: 10.0.0.105
+```
+
+Use the Pi hotspot only in the field:
+
+```bash
+sudo nmcli connection up drone
+```
+
+When connected to the `drone` hotspot:
+
+```text
+Pi IP: 10.42.0.1
+```
+
+Return to normal Wi-Fi:
+
+```bash
+sudo nmcli connection down drone
+sudo nmcli connection up CharlesZhang
+```
+
+## Common Setup
+
+Run this first in every Pi terminal:
 
 ```bash
 cd ~/matt_drone/follow_project
 source .venv/bin/activate
-python scripts/07_latest_yolo_person_follow_click_target_stream.py
 ```
 
 Expected Python environment:
 
 ```text
-/home/matt/matt_drone/follow_project/.venv/bin/python
+~/matt_drone/follow_project/.venv/bin/python
 ```
 
 If `which python` shows `/usr/bin/python`, the virtual environment is not active correctly.
 
-## Dashboard Website Startup
+## Start Current Follow Program In Dry Mode
+
+Dry mode is the default. It runs vision, target selection, status output, and command preview without sending Pixhawk movement commands.
+
+```bash
+cd ~/matt_drone/follow_project
+source .venv/bin/activate
+python -u scripts/11_follow_safe.py
+```
+
+Open from normal Wi-Fi:
+
+```text
+http://10.0.0.105:8080
+```
+
+Open from Pi hotspot:
+
+```text
+http://10.42.0.1:8080
+```
+
+Expected dry-mode terminal output includes:
+
+```text
+[DRY] FOLLOW_REAL is not 1; vision runs, Pixhawk commands are not sent.
+```
+
+## Start Real Follow Mode
+
+Only use real follow after bench tests, takeoff/land smoke test, and outdoor dry-run checks pass.
+
+```bash
+cd ~/matt_drone/follow_project
+source .venv/bin/activate
+FOLLOW_REAL=1 python -u scripts/11_follow_safe.py
+```
+
+Keep RC ready to switch out of Offboard immediately. Abort if the wrong target is locked, video freezes, position quality drops, or the aircraft moves unexpectedly.
+
+## Takeoff Hover Land Smoke Test
+
+Run this before real follow testing:
+
+```bash
+cd ~/matt_drone/follow_project
+source .venv/bin/activate
+python -u scripts/12_takeoff_hover_land_test.py --addr serial:///dev/serial0:57600 --alt 2.5 --hover 8 --real
+```
+
+The script requires typing:
+
+```text
+TAKEOFF
+```
+
+Expected behavior:
+
+- Connects to Pixhawk.
+- Waits for health checks.
+- Arms only after typed confirmation.
+- Takes off to about `2.5 m`.
+- Holds for about `8 s`.
+- Lands automatically.
+
+## Legacy MJPEG Visual Baseline
+
+Use this if you need the older MJPEG stream behavior or the website proxy workflow:
+
+```bash
+cd ~/matt_drone/follow_project
+source .venv/bin/activate
+python -u scripts/07_latest_yolo_person_follow_click_target_stream.py
+```
+
+Open:
+
+```text
+http://10.0.0.105:8000/stream
+```
+
+or from the hotspot:
+
+```text
+http://10.42.0.1:8000/stream
+```
+
+## Dashboard Website Prototype
 
 The npm website/dashboard is stored in:
 
@@ -98,44 +211,14 @@ The npm website/dashboard is stored in:
 ~/matt_drone/my-app
 ```
 
-Current package script rule:
-
-```text
-npm run dev      = start website only
-npm run dev:web  = start website only
-npm run dev:all  = start website + Python camera backend
-npm run dev:camera = start Python camera backend only
-```
-
-To start only the web interface:
+Start website only:
 
 ```bash
 cd ~/matt_drone/my-app
 npm run dev
 ```
 
-Equivalent explicit command:
-
-```bash
-cd ~/matt_drone/my-app
-npm run dev:web
-```
-
-Open:
-
-```text
-http://127.0.0.1:3000
-```
-
-From another device on the same network, replace `127.0.0.1` with the Raspberry Pi IP address:
-
-```text
-http://<pi-ip-address>:3000
-```
-
-## Website Plus Camera Backend Startup
-
-To start both the dashboard website and the Python camera backend together:
+Start website plus the legacy MJPEG camera backend:
 
 ```bash
 cd ~/matt_drone/my-app
@@ -148,48 +231,11 @@ Current `dev:camera` target:
 /home/matt/matt_drone/follow_project/.venv/bin/python /home/matt/matt_drone/follow_project/scripts/07_latest_yolo_person_follow_click_target_stream.py
 ```
 
-This means `npm run dev:all` depends on the Python virtual environment and current main program in `~/matt_drone/follow_project`.
-
-## Dashboard Camera API
-
-The dashboard proxies camera traffic through Next.js API routes.
-
-Current frontend/backend route relationship:
-
-```text
-Dashboard image source: /api/realsense
-Next.js stream proxy:  http://127.0.0.1:8000/stream
-Click target proxy:    http://127.0.0.1:8000/select_target
-```
-
-If the website shows an error like:
-
-```text
-connect ECONNREFUSED 127.0.0.1:8000
-```
-
-that means the website is running, but the Python camera backend is not running or is not listening on port `8000`.
-
-Fix by starting the backend:
-
-```bash
-cd ~/matt_drone/follow_project
-source .venv/bin/activate
-python scripts/07_latest_yolo_person_follow_click_target_stream.py
-```
-
-or start both services together from the website folder:
-
-```bash
-cd ~/matt_drone/my-app
-npm run dev:all
-```
+The website prototype still points at the `07` MJPEG backend. The real-follow WebRTC workflow uses `scripts/11_follow_safe.py` directly.
 
 ## Pixhawk Heartbeat Check
 
-Use this check to confirm the Pi can communicate with Pixhawk through MAVLink.
-
-Start MAVProxy with:
+Use MAVProxy to confirm Pi-to-Pixhawk serial communication:
 
 ```bash
 cd ~
@@ -205,100 +251,61 @@ online system 1
 Mode LOITER
 ```
 
-If this heartbeat does not appear, check Pixhawk power, serial wiring, baudrate, and the `/dev/serial0` device path.
+If this heartbeat does not appear, check Pixhawk power, serial wiring, baudrate, and `/dev/serial0`.
 
-## Startup Order
+## Recommended Field Test Order
 
-For the full current workflow, start these as needed.
-
-Option A: Start Python and website separately in two terminals.
-
-Terminal 1, Python vision backend:
+1. Bench test without props:
 
 ```bash
-cd ~/matt_drone/follow_project
-source .venv/bin/activate
-python scripts/07_latest_yolo_person_follow_click_target_stream.py
+python -u scripts/11_follow_safe.py
 ```
 
-Terminal 2, website only:
+2. Outdoor takeoff/hover/land smoke test:
 
 ```bash
-cd ~/matt_drone/my-app
-npm run dev
+python -u scripts/12_takeoff_hover_land_test.py --addr serial:///dev/serial0:57600 --alt 2.5 --hover 8 --real
 ```
 
-Option B: Start website and Python camera backend together:
+3. Outdoor follow dry run:
 
 ```bash
-cd ~/matt_drone/my-app
-npm run dev:all
+python -u scripts/11_follow_safe.py
 ```
 
-Optional Pixhawk heartbeat check:
+4. Short real follow test:
 
 ```bash
-cd ~
-source ~/px4env/bin/activate
-mavproxy.py --master=/dev/serial0 --baudrate 57600
+FOLLOW_REAL=1 python -u scripts/11_follow_safe.py
 ```
 
-Common browser pages:
+## Important Files
 
-```text
-Dashboard website: http://127.0.0.1:3000
-Camera backend:    http://127.0.0.1:8000/stream
-```
-
-If accessing from another device on the same network, replace `127.0.0.1` with the Pi IP address.
-
-## Important Project Files
-
-Current Python runtime files:
+Current runnable scripts and modules:
 
 ```text
 scripts/07_latest_yolo_person_follow_click_target_stream.py
+scripts/10_webrtc_follow_udp_test.py
+scripts/11_follow_safe.py
+scripts/12_takeoff_hover_land_test.py
 scripts/realsense_reader_module.py
-yolo11n.pt
-models/yolo11n.pt
-models/detect.tflite
-models/labelmap.txt
-```
-
-Removed from GitHub showcase:
-
-```text
-yolov8n.pt
-models/yolov8n.pt
-```
-
-`yolov8n.pt` was an older YOLO model used for comparison/history. It should not be treated as a required startup file for the current GitHub showcase version.
-
-Current dashboard files in `~/matt_drone/my-app`:
-
-```text
-app/page.tsx
-app/StreamViewer.tsx
-app/api/realsense/route.ts
-app/api/realsense/select-target/route.ts
-system.ts
-package.json
+scripts/safety_supervisor_v2.py
 ```
 
 Reference documentation:
 
 ```text
 docs/reference/current_startup_workflow.md
-docs/reference/pi5_environment_reference.md
 docs/reference/project_file_structure_reference.md
-docs/reference/realsense_d435i_reference.md
+docs/reference/pi5_environment_reference.md
 docs/reference/pixhawk_px4_reference.md
+docs/reference/realsense_d435i_reference.md
 ```
 
-Historical notes:
+Field checklist:
 
 ```text
-docs/project_notes/
+docs/field_ops/field_test_checklist.md
 ```
 
 Old experiments:
@@ -307,46 +314,7 @@ Old experiments:
 archive/experiments/
 ```
 
-## What To Update When The Main Program Changes
-
-When a new script becomes the latest startup program, update this document in these places:
-
-1. `Current Main Program`.
-2. `Python Vision Program Startup`.
-3. `What This Program Does`, if the behavior changed.
-4. `Important Project Files`, if new required files were added.
-5. `Dashboard Camera API`, if the Python stream port or URL pattern changed.
-6. `Dashboard Website Startup`, if the website folder, command, or port changed.
-7. `Website Plus Camera Backend Startup`, if the npm scripts change.
-8. `Pixhawk Heartbeat Check`, if the MAVLink device, baudrate, or success output changed.
-
-Do not add package versions here. Put version changes in:
-
-```text
-docs/reference/pi5_environment_reference.md
-```
-
-## GitHub Sync Rule
-
-GitHub does not update automatically after editing local files on the Pi 5.
-
-When Matt changes code, startup commands, project paths, package scripts, or reference documentation, Codex should remind Matt if the change should be saved to GitHub. Codex should explain what should be committed and why, then wait for Matt's approval before committing or pushing.
-
-For `follow_project`, after Matt approves a GitHub update, save it with:
-
-```bash
-cd ~/matt_drone/follow_project
-git status
-git add <changed-files>
-git commit -m "Describe the change"
-git push origin main
-```
-
-For `my-app`, do not push to GitHub yet. It currently has a local dashboard prototype commit, but the repository structure should be reorganized before publishing it to the shared GitHub repository.
-
-Runtime files should stay local and should not be committed.
-
-Ignored examples:
+## Runtime Files Not To Commit
 
 ```text
 __pycache__/
@@ -354,6 +322,9 @@ logs/
 .venv/
 .env
 *.log
+*.backup*
+*.broken_backup*
+*.before_transfer*
 color.jpg
 depth.jpg
 realsense_color.jpg
@@ -361,61 +332,54 @@ realsense_depth.jpg
 models/test.jpg
 ```
 
-## Short Project Summary
+## GitHub Sync Rule
 
-The current Python vision entry point is:
+GitHub does not update automatically after editing local files on the Pi 5. After changing code, startup commands, project paths, package scripts, or reference documentation, commit and push the relevant files after Matt approves the update.
 
-```text
-scripts/07_latest_yolo_person_follow_click_target_stream.py
+Use a clean local clone when possible:
+
+```bash
+git clone https://github.com/Matt101385/Drone_Project.git
+cd Drone_Project
 ```
 
-It runs from:
+Then:
 
-```text
-~/matt_drone/follow_project
+```bash
+git status
+git add <changed-files>
+git commit -m "Describe the change"
+git push origin main
 ```
 
-It should be started inside:
+## Short Summary
+
+Current main follow program:
 
 ```text
-.venv
+scripts/11_follow_safe.py
 ```
 
-The current GitHub showcase YOLO model is:
+Default mode:
 
 ```text
-yolo11n.pt
+DRY, no Pixhawk movement commands
 ```
 
-The dashboard website runs from:
+Real follow mode:
 
 ```text
-~/matt_drone/my-app
+FOLLOW_REAL=1 python -u scripts/11_follow_safe.py
 ```
 
-Start the website only with:
+Required smoke test before real follow:
 
 ```text
-npm run dev
+scripts/12_takeoff_hover_land_test.py
 ```
 
-Start website plus Python camera backend with:
+Common browser URL:
 
 ```text
-npm run dev:all
+http://<pi-ip>:8080
 ```
-
-The Pixhawk heartbeat check runs inside:
-
-```text
-~/px4env
-```
-
-The common browser URLs are:
-
-```text
-Dashboard website: http://127.0.0.1:3000
-Camera backend:    http://127.0.0.1:8000/stream
-```
-
-Use `docs/reference/` for current working references. Use `docs/project_notes/` for historical progress notes. Use `archive/experiments/` for old scripts that are no longer the current startup program.

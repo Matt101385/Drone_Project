@@ -1,6 +1,6 @@
 # Project File Structure Reference
 
-Last updated: 2026-05-16
+Last updated: 2026-05-24
 
 ## Purpose
 
@@ -38,14 +38,20 @@ This is the main project that is currently synced with GitHub:
 Matt101385/Drone_Project
 ```
 
-The project root should stay focused on the current runtime program, required support modules, models, reference docs, and historical archives.
+The project root should stay focused on runnable scripts, required support modules, models, reference docs, and historical archives. Current runnable Python files live in `scripts/`; older experiments live in `archive/experiments/`.
 
 Recommended structure:
 
 ```text
 follow_project/
-  scripts/07_latest_yolo_person_follow_click_target_stream.py
-  scripts/realsense_reader_module.py
+  scripts/
+    07_latest_yolo_person_follow_click_target_stream.py
+    10_webrtc_follow_udp_test.py
+    11_follow_safe.py
+    12_takeoff_hover_land_test.py
+    realsense_reader_module.py
+    safety_supervisor_v2.py
+    README.md
   models/
   docs/
   archive/
@@ -56,29 +62,59 @@ follow_project/
 ## Current Main Program
 
 ```text
-scripts/07_latest_yolo_person_follow_click_target_stream.py
-```
-
-Original historical name:
-
-```text
-stream_mjpeg_yolo.py
+scripts/11_follow_safe.py
 ```
 
 Purpose:
 
 - RealSense color/depth stream.
 - YOLO person detection.
+- WebRTC video stream on port `8080`.
 - Click-to-select target.
-- Target lock.
+- Target lock and target hold across frames.
 - Distance reading.
-- Yaw / forward command preview.
-- Browser video stream backend.
+- Yaw / forward command generation.
+- Dry mode by default.
+- Optional real Pixhawk follow mode with `FOLLOW_REAL=1`.
+- Safety supervisor integration for Offboard velocity commands.
 
-## Support Module
+## Active Script Roles
+
+```text
+scripts/07_latest_yolo_person_follow_click_target_stream.py
+```
+
+Validated MJPEG RealSense + YOLO click-target stream. This is a known-good historical runtime, but it is not the current real-follow safety entry point.
+
+```text
+scripts/10_webrtc_follow_udp_test.py
+```
+
+WebRTC follow/UDP test version used as an intermediate validation script.
+
+```text
+scripts/11_follow_safe.py
+```
+
+Current main follow program. Use this for dry visual follow and carefully staged real follow testing.
+
+```text
+scripts/12_takeoff_hover_land_test.py
+```
+
+Conservative PX4/MAVSDK takeoff, hover, and land smoke test. Use this before real follow tests.
+
+Historical name for the older MJPEG stream:
+
+```text
+stream_mjpeg_yolo.py
+```
+
+## Support Modules
 
 ```text
 scripts/realsense_reader_module.py
+scripts/safety_supervisor_v2.py
 ```
 
 Purpose:
@@ -86,6 +122,8 @@ Purpose:
 - Reusable RealSense reader logic.
 - Camera restart / recovery support.
 - Frame locking and safe frame access.
+- Safety-limited body-frame velocity commands.
+- Manual override, timeout, attitude warning, and failsafe handling.
 
 ## Models
 
@@ -168,6 +206,8 @@ Current backend target used by `npm run dev:camera`:
 ```text
 /home/matt/matt_drone/follow_project/.venv/bin/python /home/matt/matt_drone/follow_project/scripts/07_latest_yolo_person_follow_click_target_stream.py
 ```
+
+The website camera backend still points at the validated `07` MJPEG script. The current WebRTC/safety follow workflow is handled separately by `scripts/11_follow_safe.py`.
 
 Important Git rule:
 
@@ -268,7 +308,9 @@ Expected tracked patterns:
 
 ## Cleanup Rule
 
-If a file is needed to run the latest Python program, keep it in `follow_project/` or `follow_project/models/`.
+If a file is a current runnable Python script or support module, keep it in `scripts/`.
+
+If a file is needed only as a model asset, keep it in `models/` or the project root if the current script expects that path.
 
 If a file belongs to the dashboard prototype, keep it in `my-app/`.
 
