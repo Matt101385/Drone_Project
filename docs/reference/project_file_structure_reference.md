@@ -44,8 +44,8 @@ Recommended structure:
 
 ```text
 follow_project/
-  07_latest_yolo_person_follow_click_target_stream.py
-  realsense_reader_module.py
+  scripts/07_latest_yolo_person_follow_click_target_stream.py
+  scripts/realsense_reader_module.py
   models/
   docs/
   archive/
@@ -56,7 +56,7 @@ follow_project/
 ## Current Main Program
 
 ```text
-07_latest_yolo_person_follow_click_target_stream.py
+scripts/07_latest_yolo_person_follow_click_target_stream.py
 ```
 
 Original historical name:
@@ -78,7 +78,7 @@ Purpose:
 ## Support Module
 
 ```text
-realsense_reader_module.py
+scripts/realsense_reader_module.py
 ```
 
 Purpose:
@@ -166,7 +166,7 @@ npm run dev:all     # website + Python camera backend
 Current backend target used by `npm run dev:camera`:
 
 ```text
-/home/matt/matt_drone/follow_project/.venv/bin/python /home/matt/matt_drone/follow_project/07_latest_yolo_person_follow_click_target_stream.py
+/home/matt/matt_drone/follow_project/.venv/bin/python /home/matt/matt_drone/follow_project/scripts/07_latest_yolo_person_follow_click_target_stream.py
 ```
 
 Important Git rule:

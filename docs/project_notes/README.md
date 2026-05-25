@@ -23,5 +23,5 @@ The notes are organized as a development timeline:
 Current main runtime program:
 
 ```bash
-python 07_latest_yolo_person_follow_click_target_stream.py
+python scripts/07_latest_yolo_person_follow_click_target_stream.py
 ```

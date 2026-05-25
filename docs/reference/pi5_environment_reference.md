@@ -58,7 +58,7 @@ python -V
 ## Current Runtime Program
 
 ```bash
-python 07_latest_yolo_person_follow_click_target_stream.py
+python scripts/07_latest_yolo_person_follow_click_target_stream.py
 ```
 
 ## Current Version Fields

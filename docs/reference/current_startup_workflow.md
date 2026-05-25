@@ -17,7 +17,7 @@ docs/reference/pi5_environment_reference.md
 Use this file as the current latest Python runtime program:
 
 ```text
-07_latest_yolo_person_follow_click_target_stream.py
+scripts/07_latest_yolo_person_follow_click_target_stream.py
 ```
 
 Historical name before cleanup:
@@ -79,7 +79,7 @@ Use this command group when starting only the current Python vision program:
 ```bash
 cd ~/matt_drone/follow_project
 source .venv/bin/activate
-python 07_latest_yolo_person_follow_click_target_stream.py
+python scripts/07_latest_yolo_person_follow_click_target_stream.py
 ```
 
 Expected Python environment:
@@ -145,7 +145,7 @@ npm run dev:all
 Current `dev:camera` target:
 
 ```text
-/home/matt/matt_drone/follow_project/.venv/bin/python /home/matt/matt_drone/follow_project/07_latest_yolo_person_follow_click_target_stream.py
+/home/matt/matt_drone/follow_project/.venv/bin/python /home/matt/matt_drone/follow_project/scripts/07_latest_yolo_person_follow_click_target_stream.py
 ```
 
 This means `npm run dev:all` depends on the Python virtual environment and current main program in `~/matt_drone/follow_project`.
@@ -175,7 +175,7 @@ Fix by starting the backend:
 ```bash
 cd ~/matt_drone/follow_project
 source .venv/bin/activate
-python 07_latest_yolo_person_follow_click_target_stream.py
+python scripts/07_latest_yolo_person_follow_click_target_stream.py
 ```
 
 or start both services together from the website folder:
@@ -218,7 +218,7 @@ Terminal 1, Python vision backend:
 ```bash
 cd ~/matt_drone/follow_project
 source .venv/bin/activate
-python 07_latest_yolo_person_follow_click_target_stream.py
+python scripts/07_latest_yolo_person_follow_click_target_stream.py
 ```
 
 Terminal 2, website only:
@@ -257,8 +257,8 @@ If accessing from another device on the same network, replace `127.0.0.1` with t
 Current Python runtime files:
 
 ```text
-07_latest_yolo_person_follow_click_target_stream.py
-realsense_reader_module.py
+scripts/07_latest_yolo_person_follow_click_target_stream.py
+scripts/realsense_reader_module.py
 yolo11n.pt
 models/yolo11n.pt
 models/detect.tflite
@@ -366,7 +366,7 @@ models/test.jpg
 The current Python vision entry point is:
 
 ```text
-07_latest_yolo_person_follow_click_target_stream.py
+scripts/07_latest_yolo_person_follow_click_target_stream.py
 ```
 
 It runs from:

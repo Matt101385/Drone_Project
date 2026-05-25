@@ -17,7 +17,7 @@ The RealSense D435i provides:
 ```bash
 cd ~/matt_drone/follow_project
 source .venv/bin/activate
-python 07_latest_yolo_person_follow_click_target_stream.py
+python scripts/07_latest_yolo_person_follow_click_target_stream.py
 ```
 
 ## Known Working Stream Settings
