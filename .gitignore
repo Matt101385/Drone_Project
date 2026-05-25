@@ -1,7 +1,12 @@
 __pycache__/
 *.pyc
+*.py[cod]
+.DS_Store
 logs/
 *.log
+*.backup*
+*.broken_backup*
+*.before_transfer*
 .venv/
 .env
 color.jpg
