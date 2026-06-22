@@ -105,7 +105,7 @@ ls -l /dev/serial0
 Confirm the main files are present:
 
 ```bash
-ls -1 scripts/11_follow_safe.py scripts/safety_supervisor_v2.py scripts/12_takeoff_hover_land_test.py
+ls -1 11_follow_safe.py safety_supervisor_v2.py 12_takeoff_hover_land_test.py
 ```
 
 ## Test Order
@@ -115,7 +115,7 @@ ls -1 scripts/11_follow_safe.py scripts/safety_supervisor_v2.py scripts/12_takeo
 Run the follow program in dry mode:
 
 ```bash
-python -u scripts/11_follow_safe.py
+python -u 11_follow_safe.py
 ```
 
 Open from the network you are using:
@@ -137,7 +137,7 @@ Expected:
 Use this before any follow test:
 
 ```bash
-python -u scripts/12_takeoff_hover_land_test.py --addr serial:///dev/serial0:57600 --alt 2.5 --hover 8 --real
+python -u 12_takeoff_hover_land_test.py --addr serial:///dev/serial0:57600 --alt 2.5 --hover 8 --real
 ```
 
 Expected:
@@ -156,7 +156,7 @@ Keep RC ready to switch to Position or Stabilized at any moment.
 Run:
 
 ```bash
-python -u scripts/11_follow_safe.py
+python -u 11_follow_safe.py
 ```
 
 Expected:
@@ -171,7 +171,7 @@ Expected:
 Only after the earlier tests pass:
 
 ```bash
-FOLLOW_REAL=1 python -u scripts/11_follow_safe.py
+FOLLOW_REAL=1 python -u 11_follow_safe.py
 ```
 
 Start with very short, low-speed motion. Keep the RC ready and switch out of Offboard immediately if behavior looks wrong.
@@ -199,8 +199,8 @@ Keep these in the repository:
 
 - `scripts/safety_supervisor_v2.py`
 - `scripts/12_takeoff_hover_land_test.py`
-- `scripts/11_follow_safe.py`
-- `scripts/10_webrtc_follow_udp_test.py` if kept as an experiment/archive.
+- `11_follow_safe.py`
+- `10_webrtc_follow_udp_test.py` if kept as an experiment/archive.
 - `docs/field_ops/field_test_checklist.md`
 
 Do not keep generated files or local backups:
