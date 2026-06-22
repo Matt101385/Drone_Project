@@ -10,16 +10,61 @@ Use home or phone Wi-Fi while developing:
 ssh matt@10.0.0.105
 ```
 
-Use the Pi hotspot only in the field:
+Before any field day, set the Pi to start its own hotspot automatically on boot.
+Do this at home while you still have normal Wi-Fi, SSH, and a screen/keyboard fallback:
 
 ```bash
-sudo nmcli connection up drone
+sudo nano /etc/systemd/system/drone-hotspot.service
 ```
 
-On iPad or Mac, connect to Wi-Fi `drone` and open:
+Use this service file:
+
+```ini
+[Unit]
+Description=Start drone WiFi hotspot on boot
+After=NetworkManager.service
+Wants=NetworkManager.service
+
+[Service]
+Type=oneshot
+ExecStartPre=/bin/sleep 25
+ExecStart=/usr/bin/nmcli connection up drone
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target
+```
+
+Enable it:
+
+```bash
+sudo systemctl daemon-reload
+sudo systemctl enable drone-hotspot.service
+```
+
+Test the hotspot by rebooting, not by manually starting the service:
+
+```bash
+sudo reboot
+```
+
+After the Pi reboots, connect the Mac/iPad to Wi-Fi `drone` and open:
 
 ```text
 http://10.42.0.1:8080
+```
+
+SSH over the Pi hotspot:
+
+```bash
+ssh matt@10.42.0.1
+```
+
+Use the correct address for the network you are on:
+
+```text
+Home Wi-Fi:  http://10.0.0.105:8080
+Pi hotspot:  http://10.42.0.1:8080
 ```
 
 Return to normal Wi-Fi:
@@ -60,7 +105,7 @@ ls -l /dev/serial0
 Confirm the main files are present:
 
 ```bash
-ls -1 11_follow_safe.py safety_supervisor_v2.py 12_takeoff_hover_land_test.py
+ls -1 scripts/11_follow_safe.py scripts/safety_supervisor_v2.py scripts/12_takeoff_hover_land_test.py
 ```
 
 ## Test Order
@@ -70,13 +115,14 @@ ls -1 11_follow_safe.py safety_supervisor_v2.py 12_takeoff_hover_land_test.py
 Run the follow program in dry mode:
 
 ```bash
-python -u 11_follow_safe.py
+python -u scripts/11_follow_safe.py
 ```
 
-Open:
+Open from the network you are using:
 
 ```text
-http://10.0.0.105:8080
+Home Wi-Fi:  http://10.0.0.105:8080
+Pi hotspot:  http://10.42.0.1:8080
 ```
 
 Expected:
@@ -91,7 +137,7 @@ Expected:
 Use this before any follow test:
 
 ```bash
-python -u 12_takeoff_hover_land_test.py --addr serial:///dev/serial0:57600 --alt 2.5 --hover 8 --real
+python -u scripts/12_takeoff_hover_land_test.py --addr serial:///dev/serial0:57600 --alt 2.5 --hover 8 --real
 ```
 
 Expected:
@@ -110,7 +156,7 @@ Keep RC ready to switch to Position or Stabilized at any moment.
 Run:
 
 ```bash
-python -u 11_follow_safe.py
+python -u scripts/11_follow_safe.py
 ```
 
 Expected:
@@ -125,7 +171,7 @@ Expected:
 Only after the earlier tests pass:
 
 ```bash
-FOLLOW_REAL=1 python -u 11_follow_safe.py
+FOLLOW_REAL=1 python -u scripts/11_follow_safe.py
 ```
 
 Start with very short, low-speed motion. Keep the RC ready and switch out of Offboard immediately if behavior looks wrong.
@@ -153,8 +199,8 @@ Keep these in the repository:
 
 - `scripts/safety_supervisor_v2.py`
 - `scripts/12_takeoff_hover_land_test.py`
-- `11_follow_safe.py`
-- `10_webrtc_follow_udp_test.py` if kept as an experiment/archive.
+- `scripts/11_follow_safe.py`
+- `scripts/10_webrtc_follow_udp_test.py` if kept as an experiment/archive.
 - `docs/field_ops/field_test_checklist.md`
 
 Do not keep generated files or local backups:
