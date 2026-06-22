@@ -147,6 +147,28 @@ Manual takeover:
 Switch RC mode to Position or Stabilized.
 ```
 
+## Stopping While Airborne
+
+Do not use `Ctrl+C` as the first step while the aircraft is still being controlled by Offboard.
+
+Normal stop:
+
+1. Switch RC mode out of Offboard to Position or Loiter.
+2. Confirm the aircraft is stable and responding to RC control.
+3. Press `Ctrl+C` in the Pi terminal to stop `11_follow_safe.py`.
+
+Emergency stop:
+
+1. Switch RC mode to Return, Land, Position, or Stabilized.
+2. Keep manual control ready until the aircraft is safe.
+3. Stop the Python program with `Ctrl+C` after the flight mode has changed.
+
+Expected program cleanup after `Ctrl+C`:
+
+```text
+zero command, stop Offboard
+```
+
 ## GitHub Files To Keep
 
 Keep these in the repository:
