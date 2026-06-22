@@ -10,63 +10,6 @@ Use home or phone Wi-Fi while developing:
 ssh matt@10.0.0.105
 ```
 
-Before any field day, set the Pi to start its own hotspot automatically on boot.
-Do this at home while you still have normal Wi-Fi, SSH, and a screen/keyboard fallback:
-
-```bash
-sudo nano /etc/systemd/system/drone-hotspot.service
-```
-
-Use this service file:
-
-```ini
-[Unit]
-Description=Start drone WiFi hotspot on boot
-After=NetworkManager.service
-Wants=NetworkManager.service
-
-[Service]
-Type=oneshot
-ExecStartPre=/bin/sleep 25
-ExecStart=/usr/bin/nmcli connection up drone
-RemainAfterExit=yes
-
-[Install]
-WantedBy=multi-user.target
-```
-
-Enable it:
-
-```bash
-sudo systemctl daemon-reload
-sudo systemctl enable drone-hotspot.service
-```
-
-Test the hotspot by rebooting, not by manually starting the service:
-
-```bash
-sudo reboot
-```
-
-After the Pi reboots, connect the Mac/iPad to Wi-Fi `drone` and open:
-
-```text
-http://10.42.0.1:8080
-```
-
-SSH over the Pi hotspot:
-
-```bash
-ssh matt@10.42.0.1
-```
-
-Use the correct address for the network you are on:
-
-```text
-Home Wi-Fi:  http://10.0.0.105:8080
-Pi hotspot:  http://10.42.0.1:8080
-```
-
 Return to normal Wi-Fi:
 
 ```bash
@@ -118,11 +61,10 @@ Run the follow program in dry mode:
 python -u 11_follow_safe.py
 ```
 
-Open from the network you are using:
+Open:
 
 ```text
-Home Wi-Fi:  http://10.0.0.105:8080
-Pi hotspot:  http://10.42.0.1:8080
+http://10.0.0.105:8080
 ```
 
 Expected:
