@@ -10,6 +10,18 @@ Use home or phone Wi-Fi while developing:
 ssh matt@10.0.0.105
 ```
 
+Use the Pi hotspot only in the field:
+
+```bash
+sudo nmcli connection up drone
+```
+
+On iPad or Mac, connect to Wi-Fi `drone` and open:
+
+```text
+http://10.42.0.1:8080
+```
+
 Return to normal Wi-Fi:
 
 ```bash
