@@ -60,7 +60,7 @@ ls -l /dev/serial0
 Confirm the main files are present:
 
 ```bash
-ls -1 11_follow_safe.py safety_supervisor_v2.py 12_takeoff_hover_land_test.py
+ls -1 11_follow_safe.py safety_supervisor_v2.py 13_takeoff_hover_land_test.py
 ```
 
 ## Test Order
@@ -91,7 +91,7 @@ Expected:
 Use this before any follow test:
 
 ```bash
-python -u 12_takeoff_hover_land_test.py --addr serial:///dev/serial0:57600 --alt 2.5 --hover 8 --real
+python -u 13_takeoff_hover_land_test.py --addr serial:///dev/serial0:57600 --alt 2.5 --hover 8 --real
 ```
 
 Expected:
@@ -147,34 +147,12 @@ Manual takeover:
 Switch RC mode to Position or Stabilized.
 ```
 
-## Stopping While Airborne
-
-Do not use `Ctrl+C` as the first step while the aircraft is still being controlled by Offboard.
-
-Normal stop:
-
-1. Switch RC mode out of Offboard to Position or Loiter.
-2. Confirm the aircraft is stable and responding to RC control.
-3. Press `Ctrl+C` in the Pi terminal to stop `11_follow_safe.py`.
-
-Emergency stop:
-
-1. Switch RC mode to Return, Land, Position, or Stabilized.
-2. Keep manual control ready until the aircraft is safe.
-3. Stop the Python program with `Ctrl+C` after the flight mode has changed.
-
-Expected program cleanup after `Ctrl+C`:
-
-```text
-zero command, stop Offboard
-```
-
 ## GitHub Files To Keep
 
 Keep these in the repository:
 
 - `scripts/safety_supervisor_v2.py`
-- `scripts/12_takeoff_hover_land_test.py`
+- `scripts/13_takeoff_hover_land_test.py`
 - `11_follow_safe.py`
 - `10_webrtc_follow_udp_test.py` if kept as an experiment/archive.
 - `docs/field_ops/field_test_checklist.md`
