@@ -1,275 +1,49 @@
 # Project File Structure Reference
 
-Last updated: 2026-05-24
+## Active Project
 
-## Purpose
-
-This document explains how the drone project files are currently organized on the Raspberry Pi 5 and how the main folders should be treated.
-
-## Current Top-Level Local Layout
-
-Current working folder group:
-
-```text
-~/matt_drone/
-  follow_project/          # Python / RealSense / YOLO / drone vision project
-  my-app/                  # Next.js dashboard prototype
-```
-
-Cleanup backup folder:
-
-```text
-~/matt_drone_cleanup_backup/
-```
-
-The backup folder contains old duplicate project copies and temporary files moved out during cleanup. Do not use it as the active project location unless intentionally recovering an old file.
-
-## Main Python Project
-
-Current active Python vision project:
+Current Raspberry Pi project path:
 
 ```text
 ~/matt_drone/follow_project
 ```
 
-This is the main project that is currently synced with GitHub:
+GitHub repository:
 
 ```text
 Matt101385/Drone_Project
 ```
 
-The project root should stay focused on runnable scripts, required support modules, models, reference docs, and historical archives. Current runnable Python files live in `scripts/`; older experiments live in `archive/experiments/`.
+## Main Runtime Files
 
-Recommended structure:
+| File | Role |
+| --- | --- |
+| `scripts/11_follow_safe.py` | Current RealSense + YOLO + WebRTC + safety follow program. |
+| `scripts/safety_supervisor_v2.py` | Safety layer for Offboard velocity commands. |
+| `scripts/13_takeoff_hover_land_test.py` | PX4 takeoff, hover, and land smoke test. |
+| `scripts/10_webrtc_follow_udp_test.py` | Intermediate WebRTC/UDP validation script. |
+| `realsense_depth.py` | Small RealSense depth test/helper script. |
+| `stream_mjpeg.py` | Older basic MJPEG stream script. |
 
-```text
-follow_project/
-  scripts/
-    07_latest_yolo_person_follow_click_target_stream.py
-    10_webrtc_follow_udp_test.py
-    11_follow_safe.py
-    12_takeoff_hover_land_test.py
-    realsense_reader_module.py
-    safety_supervisor_v2.py
-    README.md
-  models/
-  docs/
-  archive/
-  .gitignore
-  .gitattributes
-```
+## Reference Docs
 
-## Current Main Program
+| File | Role |
+| --- | --- |
+| `docs/reference/README.md` | Reference folder index. |
+| `docs/reference/current_startup_workflow.md` | Current startup commands. |
+| `docs/reference/pi5_environment_reference.md` | Pi 5 OS, Python, and environment facts. |
+| `docs/reference/pixhawk_px4_reference.md` | Pixhawk/PX4 wiring and flight-mode reference. |
+| `docs/reference/realsense_d435i_reference.md` | RealSense D435i device and runtime facts. |
+| `docs/reference/project_file_structure_reference.md` | This file. |
 
-```text
-scripts/11_follow_safe.py
-```
-
-Purpose:
-
-- RealSense color/depth stream.
-- YOLO person detection.
-- WebRTC video stream on port `8080`.
-- Click-to-select target.
-- Target lock and target hold across frames.
-- Distance reading.
-- Yaw / forward command generation.
-- Dry mode by default.
-- Optional real Pixhawk follow mode with `FOLLOW_REAL=1`.
-- Safety supervisor integration for Offboard velocity commands.
-
-## Active Script Roles
+## Field Docs
 
 ```text
-scripts/07_latest_yolo_person_follow_click_target_stream.py
+docs/field_ops/field_test_checklist.md
+docs/testing/sitl_follow_closed_loop_test.md
 ```
 
-Validated MJPEG RealSense + YOLO click-target stream. This is a known-good historical runtime, but it is not the current real-follow safety entry point.
-
-```text
-scripts/10_webrtc_follow_udp_test.py
-```
-
-WebRTC follow/UDP test version used as an intermediate validation script.
-
-```text
-scripts/11_follow_safe.py
-```
-
-Current main follow program. Use this for dry visual follow and carefully staged real follow testing.
-
-```text
-scripts/12_takeoff_hover_land_test.py
-```
-
-Conservative PX4/MAVSDK takeoff, hover, and land smoke test. Use this before real follow tests.
-
-Historical name for the older MJPEG stream:
-
-```text
-stream_mjpeg_yolo.py
-```
-
-## Support Modules
-
-```text
-scripts/realsense_reader_module.py
-scripts/safety_supervisor_v2.py
-```
-
-Purpose:
-
-- Reusable RealSense reader logic.
-- Camera restart / recovery support.
-- Frame locking and safe frame access.
-- Safety-limited body-frame velocity commands.
-- Manual override, timeout, attitude warning, and failsafe handling.
-
-## Models
-
-Important model files may appear in the project root or inside `models/`, depending on the script history. The preferred direction is to keep model assets in `models/` when practical.
-
-Current primary YOLO model:
-
-```text
-yolo11n.pt
-models/yolo11n.pt
-```
-
-`yolo11n.pt` is the model to keep for the current GitHub showcase version.
-
-Removed from GitHub showcase:
-
-```text
-yolov8n.pt
-models/yolov8n.pt
-```
-
-`yolov8n.pt` was an older YOLO model used for comparison/history. It should not be treated as a required GitHub project file. If needed, keep it only as a local backup outside the showcase path.
-
-Legacy experiment model files:
-
-```text
-models/detect.tflite
-models/labelmap.txt
-```
-
-TFLite experiment model and labels.
-
-```text
-models/MobileNetSSD_deploy.caffemodel
-models/MobileNetSSD_deploy.prototxt
-```
-
-MobileNet SSD experiment files.
-
-## Dashboard Website Project
-
-Current local dashboard project:
-
-```text
-~/matt_drone/my-app
-```
-
-Purpose:
-
-- Next.js web dashboard prototype.
-- Display RealSense/YOLO stream through a browser UI.
-- Send click-target requests from the browser to the Python backend.
-- Show Pi/system status cards.
-
-Important files:
-
-```text
-my-app/
-  app/page.tsx
-  app/StreamViewer.tsx
-  app/api/realsense/route.ts
-  app/api/realsense/select-target/route.ts
-  system.ts
-  package.json
-  package-lock.json
-  .gitignore
-```
-
-Current package script rule:
-
-```text
-npm run dev         # website only
-npm run dev:web     # website only
-npm run dev:camera  # Python camera backend only
-npm run dev:all     # website + Python camera backend
-```
-
-Current backend target used by `npm run dev:camera`:
-
-```text
-/home/matt/matt_drone/follow_project/.venv/bin/python /home/matt/matt_drone/follow_project/scripts/07_latest_yolo_person_follow_click_target_stream.py
-```
-
-The website camera backend still points at the validated `07` MJPEG script. The current WebRTC/safety follow workflow is handled separately by `scripts/11_follow_safe.py`.
-
-Important Git rule:
-
-```text
-Do not push from ~/matt_drone/my-app yet.
-```
-
-Reason: `my-app` is currently a separate local Git repository, but it points to the same GitHub repo as `follow_project`. Publishing it should wait until the GitHub repository structure is intentionally reorganized.
-
-## Reference Documentation
-
-Current reference docs live in:
-
-```text
-~/matt_drone/follow_project/docs/reference/
-```
-
-Important files:
-
-```text
-docs/reference/current_startup_workflow.md
-docs/reference/pi5_environment_reference.md
-docs/reference/project_file_structure_reference.md
-docs/reference/realsense_d435i_reference.md
-docs/reference/pixhawk_px4_reference.md
-```
-
-Reference docs are for current working facts. If startup commands, project paths, hardware settings, or package versions change, update the relevant reference file after Matt approves the GitHub update.
-
-## Archive
-
-Experiment scripts should be stored in:
-
-```text
-archive/experiments/
-```
-
-These files are not the current runtime program. They exist for history and project summaries.
-
-Examples:
-
-```text
-01_realsense_capture_save_test.py
-02_realsense_basic_mjpeg_stream.py
-03_face_detection_mjpeg_stream.py
-04_realsense_depth_center_distance_test.py
-04a_failed_hog_person_detection_stream.py
-04b_failed_mobilenet_ssd_person_detection_stream.py
-05_tflite_legacy_proxy_detection_stream.py
-06_tflite_integrated_object_detection_stream.py
-06a_early_yolov8_person_detection_stream.py
-```
-
-Historical notes should stay in:
-
-```text
-docs/project_notes/
-```
-
-## Runtime Files Not to Track
-
-Do not keep these in GitHub:
+## Do Not Commit Runtime Files
 
 ```text
 __pycache__/
@@ -277,58 +51,23 @@ logs/
 .venv/
 .env
 *.log
+*.backup*
+*.broken_backup*
+*.before_transfer*
 color.jpg
 depth.jpg
 realsense_color.jpg
 realsense_depth.jpg
-models/test.jpg
 ```
 
-Website runtime/build files should also stay out of GitHub:
+## Still To Confirm For Final Report
 
-```text
-my-app/.next/
-my-app/node_modules/
-my-app/*.pt
-my-app/*.onnx
-my-app/*.tflite
-```
-
-## Git LFS
-
-Large model files such as `.pt`, `.tflite`, and `.zip` may need Git LFS.
-
-Expected tracked patterns:
-
-```text
-*.pt
-*.zip
-*.tflite
-```
-
-## Cleanup Rule
-
-If a file is a current runnable Python script or support module, keep it in `scripts/`.
-
-If a file is needed only as a model asset, keep it in `models/` or the project root if the current script expects that path.
-
-If a file belongs to the dashboard prototype, keep it in `my-app/`.
-
-If a file is only useful for history, move it to `archive/experiments/` or `docs/project_notes/`.
-
-If a file is generated at runtime, ignore it.
-
-If a file is an old duplicate from before cleanup, keep it in `~/matt_drone_cleanup_backup/` unless intentionally restoring it.
-
-## Future Repository Direction
-
-The likely clean long-term GitHub structure is:
-
-```text
-Drone_Project/
-  follow_project/
-  my-app/
-  docs/
-```
-
-This reorganization has not been done yet. Until it is done, treat `follow_project` as the main GitHub-synced project and keep `my-app` local.
+- Frame model and wheelbase.
+- Motor model and KV rating.
+- ESC model and current rating.
+- Propeller size.
+- Battery capacity, C rating, and weight.
+- GPS module model.
+- RC receiver model.
+- Power module or BEC model.
+- Full takeoff weight.

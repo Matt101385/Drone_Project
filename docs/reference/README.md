@@ -1,26 +1,17 @@
 # Reference
 
-This folder contains current-state reference documents for the drone project.
+This folder records the current working setup for the drone project.
 
-Use this folder for facts that should stay easy to find:
+Use these files for final reports, field checks, and rebuild notes:
 
-- Current Pi 5 environment and version information.
-- Current project file organization.
-- Pixhawk / PX4 wiring and connection settings.
-- RealSense D435i setup and runtime notes.
+| File | Purpose |
+| --- | --- |
+| `current_startup_workflow.md` | Commands for starting the current programs. |
+| `pi5_environment_reference.md` | Raspberry Pi 5 model, OS, Python, and package environment. |
+| `pixhawk_px4_reference.md` | Pixhawk 6X, PX4, TELEM2 wiring, RC mode, and safety settings. |
+| `realsense_d435i_reference.md` | Intel RealSense D435i detection and runtime settings. |
+| `project_file_structure_reference.md` | Current repository layout and file roles. |
 
-These files are different from `docs/project_notes/`:
+`docs/project_notes/` is for project history. `docs/reference/` is for current facts.
 
-- `docs/project_notes/` records the development timeline.
-- `docs/reference/` records the current working setup.
-
-Recommended references:
-
-```text
-pi5_environment_reference.md
-project_file_structure_reference.md
-pixhawk_px4_reference.md
-realsense_d435i_reference.md
-```
-
-Update these files whenever the hardware, environment, file layout, or startup process changes.
+Update this folder whenever the hardware, software versions, startup commands, or wiring change.
