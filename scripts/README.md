@@ -1,19 +1,13 @@
 # Scripts
 
-This folder holds runnable Python programs and support modules that are still part of the current project line.
+This folder holds the current main Python programs for the drone project.
 
-## Current / Maintained
+## Current Main Programs
 
-- `07_latest_yolo_person_follow_click_target_stream.py` - validated MJPEG RealSense + YOLO click-target stream.
-- `12_takeoff_hover_land_test.py` - conservative PX4 takeoff, hover, and land smoke test.
+- `11_follow_safe.py` - current RealSense + YOLO + WebRTC follow program with dry mode and optional real Pixhawk control.
+- `13_takeoff_hover_land_test.py` - conservative PX4 takeoff, hover, and land smoke test.
 - `safety_supervisor_v2.py` - safety gate for real follow velocity commands.
-- `realsense_reader_module.py` - reusable RealSense reader/recovery helper.
 
-## To Add From Pi
+## Archive
 
-These should be copied from the Pi when the current real versions are ready:
-
-- `10_webrtc_follow_udp_test.py`
-- `11_follow_safe.py`
-
-Keep old experiments in `archive/experiments/`, not here.
+Older experiments and helper scripts are stored in `archive/experiments/`.
