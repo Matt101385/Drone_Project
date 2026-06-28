@@ -6,11 +6,9 @@ Use these files for final reports, field checks, and rebuild notes:
 
 | File | Purpose |
 | --- | --- |
-| `current_startup_workflow.md` | Commands for starting the current programs. |
 | `pi5_environment_reference.md` | Raspberry Pi 5 model, OS, Python, and package environment. |
 | `pixhawk_px4_reference.md` | Pixhawk 6X, PX4, TELEM2 wiring, RC mode, and safety settings. |
 | `realsense_d435i_reference.md` | Intel RealSense D435i detection and runtime settings. |
-| `project_file_structure_reference.md` | Current repository layout and file roles. |
 
 `docs/project_notes/` is for project history. `docs/reference/` is for current facts.
 
