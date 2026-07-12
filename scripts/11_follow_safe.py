@@ -244,11 +244,18 @@ async def follow_control_loop():
                 last_print = now
             await asyncio.sleep(0.1)
 
+    print("[PX4] importing mavsdk...", flush=True)
     from mavsdk import System
     from mavsdk.offboard import OffboardError, VelocityBodyYawspeed
+    print("[PX4] mavsdk imported", flush=True)
 
     drone = System()
+    print("[PX4] System created", flush=True)
+
+    print(f"[PX4] calling connect: {PX4_ADDR}", flush=True)
     await drone.connect(system_address=PX4_ADDR)
+    print("[PX4] connect returned", flush=True)
+
     await wait_until_connected(drone)
 
     supervisor = SafetySupervisorV2(
@@ -324,8 +331,11 @@ async def follow_control_loop():
 
 
 def run_follow_control_loop():
-    asyncio.run(follow_control_loop())
-
+    print("[PX4] thread started", flush=True)
+    try:
+        asyncio.run(follow_control_loop())
+    except Exception as e:
+        print("[PX4] thread crashed:", repr(e), flush=True)
 
 # =========================
 # Camera Loop
