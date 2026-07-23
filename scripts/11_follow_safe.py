@@ -6,6 +6,7 @@ import cv2
 from flask import Flask, Response, request, jsonify
 import os
 import logging
+import csv
 from datetime import datetime
 from ultralytics import YOLO
 # 新增
@@ -29,6 +30,11 @@ log_file = os.path.join(
     f"stream_{datetime.now().strftime('%Y%m%d')}.log"
 )
 
+flight_log_file = os.path.join(
+    log_dir,
+    f"flight_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
+)
+
 logging.basicConfig(
     filename=log_file,
     level=logging.INFO,
@@ -37,7 +43,9 @@ logging.basicConfig(
 
 logger = logging.getLogger()
 logger.info("YOLO stream program started")
-
+print(f"[LOG] stream log: {log_file}", flush=True)
+print(f"[LOG] flight csv: {flight_log_file}", flush=True)
+logger.info(f"Flight CSV log: {flight_log_file}")
 # =========================
 # Basic Config
 # =========================
@@ -49,15 +57,23 @@ RESTART_WAIT_SEC = 2
 MODEL_PATH = "yolo11n.pt"
 CONF_THRES = 0.4
 
-# yaw control preview only
-Kp = 8.0
-DEADBAND = 0.08
-MAX_YAW_CMD = 10.0
-# forward distance control preview only
+# yaw control
+Kp = 10.0
+DEADBAND = 0.06
+MAX_YAW_CMD = 30.0
+
+# forward distance control
 TARGET_DIST_M = 4.0
-DIST_DEADBAND = 0.40
-Kp_forward = 0.15
-MAX_FORWARD_CMD = 0.15
+DIST_DEADBAND = 0.30
+Kp_forward = 0.30
+MAX_FORWARD_CMD = 0.8
+
+# altitude hold in Offboard mode
+# positive down_m_s = descend, negative down_m_s = climb
+ALT_HOLD_TARGET_M = float(os.environ.get("FOLLOW_ALT_M", "1.5"))
+ALT_HOLD_DEADBAND_M = 0.10
+ALT_HOLD_KP = 0.35
+MAX_VERTICAL_CMD = 0.20
 
 DEPTH_MIN_M = 0.3
 DEPTH_MAX_M = 6.0
@@ -100,7 +116,6 @@ try:
 except Exception as e:
     logger.error(f"Failed to load YOLO model: {e}")
     model = None
-
 # =========================
 # RealSense helpers
 # =========================
@@ -213,8 +228,56 @@ def read_follow_command():
     with lock:
         return dict(latest_follow_command)
 
+def append_flight_log(row):
+    file_exists = os.path.exists(flight_log_file)
+
+    with open(flight_log_file, "a", newline="") as f:
+        writer = csv.DictWriter(
+            f,
+            fieldnames=[
+                "timestamp",
+                "monotonic",
+                "mode",
+                "locked",
+                "forward_m_s",
+                "right_m_s",
+                "down_m_s",
+                "yaw_deg_s",
+                "altitude_m",
+                "alt_error_m",
+                "alt_down_cmd_m_s",
+                "source",
+            ],
+        )
+
+        if not file_exists:
+            writer.writeheader()
+
+        writer.writerow(row)
+
+def compute_altitude_hold_down_cmd(current_alt_m):
+    if current_alt_m is None:
+        return 0.0
+
+    alt_error_m = float(current_alt_m) - ALT_HOLD_TARGET_M
+
+    if abs(alt_error_m) < ALT_HOLD_DEADBAND_M:
+        return 0.0
+
+    down_cmd = ALT_HOLD_KP * alt_error_m
+    return max(min(down_cmd, MAX_VERTICAL_CMD), -MAX_VERTICAL_CMD)
 
 
+async def watch_relative_altitude(drone, state):
+    async for pos in drone.telemetry.position():
+        state["relative_altitude_m"] = float(pos.relative_altitude_m)
+async def wait_for_altitude_sample(state, timeout_s=3.0):
+    start = time.monotonic()
+    while state.get("relative_altitude_m") is None:
+        if time.monotonic() - start > timeout_s:
+            return None
+        await asyncio.sleep(0.05)
+    return state["relative_altitude_m"]
 async def wait_until_connected(drone):
     print(f"[PX4] connecting to {PX4_ADDR} ...")
     async for state in drone.core.connection_state():
@@ -257,7 +320,10 @@ async def follow_control_loop():
     print("[PX4] connect returned", flush=True)
 
     await wait_until_connected(drone)
-
+    altitude_state = {"relative_altitude_m": None}
+    altitude_task = asyncio.create_task(
+        watch_relative_altitude(drone, altitude_state)
+    )
     supervisor = SafetySupervisorV2(
         drone,
         SafetyLimits(
@@ -266,12 +332,12 @@ async def follow_control_loop():
             command_timeout_s=0.7,
             max_forward_m_s=MAX_FORWARD_CMD,
             max_right_m_s=0.0,
-            max_down_m_s=0.0,
+            max_down_m_s=MAX_VERTICAL_CMD,
             max_yaw_deg_s=MAX_YAW_CMD,
-            max_forward_accel_m_s2=0.4,
+            max_forward_accel_m_s2=1.0,
             max_right_accel_m_s2=0.4,
             max_down_accel_m_s2=0.3,
-            max_yaw_accel_deg_s2=30.0,
+            max_yaw_accel_deg_s2=90.0,
         ),
         limit_breach_action="warn",
         attitude_breach_action="warn",
@@ -280,7 +346,20 @@ async def follow_control_loop():
     await supervisor.install()
 
     try:
+        initial_alt = await wait_for_altitude_sample(altitude_state)
+        if initial_alt is None:
+            print("[ALT] no altitude sample; refusing to enter Offboard altitude hold.")
+            return
+
+        print(
+            f"[ALT] current={initial_alt:.2f}m "
+            f"target={ALT_HOLD_TARGET_M:.2f}m "
+            f"max_vertical={MAX_VERTICAL_CMD:.2f}m/s"
+        )
+
         print("[PX4] starting Offboard with zero velocity...")
+    
+    
         await drone.offboard.set_velocity_body(VelocityBodyYawspeed(0.0, 0.0, 0.0, 0.0))
         await asyncio.sleep(0.2)
 
@@ -292,17 +371,41 @@ async def follow_control_loop():
 
         supervisor.mark_offboard_started()
         print("[PX4] Offboard active. Safety Supervisor is controlling commands.")
-
+        last_alt_print = 0.0
         while True:
             cmd = read_follow_command()
             now = time.monotonic()
             age = now - cmd["updated_monotonic"]
+            current_alt = altitude_state.get("relative_altitude_m")
+            down_cmd = compute_altitude_hold_down_cmd(current_alt)
+            alt_error = None if current_alt is None else current_alt - ALT_HOLD_TARGET_M
 
+            append_flight_log({
+                "timestamp": datetime.now().isoformat(timespec="milliseconds"),
+                "monotonic": f"{now:.3f}",
+                "mode": "REAL",
+                "locked": cmd["target_locked"],
+                "forward_m_s": f"{cmd['forward_m_s']:.3f}",
+                "right_m_s": f"{cmd['right_m_s']:.3f}",
+                "down_m_s": f"{cmd['down_m_s']:.3f}",
+                "yaw_deg_s": f"{cmd['yaw_deg_s']:.3f}",
+                "altitude_m": "" if current_alt is None else f"{current_alt:.3f}",
+                "alt_error_m": "" if alt_error is None else f"{alt_error:.3f}",
+                "alt_down_cmd_m_s": f"{down_cmd:.3f}",
+                "source": cmd["source"],
+            })
+            if current_alt is not None and now - last_alt_print >= 1.0:
+                print(
+                    f"[ALT] target={ALT_HOLD_TARGET_M:.2f}m "
+                    f"current={current_alt:.2f}m "
+                    f"down_cmd={down_cmd:+.2f}m/s"
+                )
+                last_alt_print = now
             if age > 0.5 or not cmd["target_locked"]:
                 await supervisor.send_velocity_body(
                     0.0,
                     0.0,
-                    0.0,
+                    down_cmd,
                     0.0,
                     source=f"hold-no-target-age-{age:.2f}s",
                 )
@@ -310,7 +413,7 @@ async def follow_control_loop():
                 await supervisor.send_velocity_body(
                     cmd["forward_m_s"],
                     cmd["right_m_s"],
-                    cmd["down_m_s"],
+                    down_cmd,
                     cmd["yaw_deg_s"],
                     source=cmd["source"],
                 )
@@ -327,8 +430,13 @@ async def follow_control_loop():
             await drone.offboard.stop()
         except Exception:
             pass
-        await supervisor.uninstall()
+        altitude_task.cancel()
+        try:
+            await altitude_task
+        except asyncio.CancelledError:
+            pass
 
+        await supervisor.uninstall()
 
 def run_follow_control_loop():
     print("[PX4] thread started", flush=True)
@@ -621,7 +729,11 @@ def camera_loop():
                 last_t = now
                 logger.info(
                     f"FPS {fps_est:.1f}, detections {det_count}, persons {len(person_boxes)}, "
-                    f"locked {locked_target is not None}, yaw_cmd {yaw_cmd:.3f}, infer {infer_ms:.1f} ms"
+                    f"locked {locked_target is not None}, "
+                    f"dist {target_dist if target_dist is not None else 'N/A'}, "
+                    f"dist_error {dist_error:.2f}, "
+                    f"forward_cmd {forward_cmd:.3f}, "
+                    f"yaw_cmd {yaw_cmd:.3f}, infer {infer_ms:.1f} ms"
                 )
 
             cv2.putText(color_image, f"FPS {fps_est:.1f}", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 2)
