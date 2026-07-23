@@ -1,4 +1,9 @@
-# SITL Follow Closed-Loop Test
+# Historical SITL UDP Closed-Loop Validation
+
+> **Status:** Historical validation record  
+> **Architecture:** Pi vision → UDP → Mac receiver → PX4 SITL  
+> **Current use:** This is not the startup procedure for the final v1.0 system.  
+> **Purpose:** Preserved as evidence that the vision-to-flight-command chain was validated in simulation before real-flight integration.
 
 This document records the current simulation test flow for the person-following
 pipeline:
