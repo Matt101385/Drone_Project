@@ -4,10 +4,10 @@ Minimal PX4/MAVSDK takeoff-hover-land test.
 
 Examples:
     # SITL
-    python -u 13_takeoff_hover_land_test.py --addr udp://:14540 --real
+    python -u tests/hardware/takeoff_hover_land_test.py --addr udp://:14540 --real
 
     # Raspberry Pi to Pixhawk serial
-    python -u 13_takeoff_hover_land_test.py --addr serial:///dev/serial0:57600 --alt 2.5 --hover 8 --real
+    python -u tests/hardware/takeoff_hover_land_test.py --addr serial:///dev/serial0:57600 --alt 2.5 --hover 8 --real
 
 The script intentionally requires --real plus a typed confirmation before arming.
 """

@@ -56,7 +56,7 @@ Python 3.13.5
 | Computer vision | YOLO11n |
 | Web stream | WebRTC / browser interface on port `8080` |
 | Flight-control link | MAVSDK / MAVLink to Pixhawk over serial |
-| Safety layer | `scripts/safety_supervisor_v2.py` |
+| Safety layer | `src/safety_supervisor_v2.py` |
 
 ## Notes
 
