@@ -1,4 +1,5 @@
 import time
+import atexit
 import threading
 import numpy as np
 import pyrealsense2 as rs
@@ -8,8 +9,7 @@ import os
 import logging
 import csv
 from datetime import datetime
-from ultralytics import YOLO
-# 新增
+from hailo_person_detector import HailoPersonDetector
 import asyncio
 
 from aiohttp import web
@@ -49,13 +49,13 @@ logger.info(f"Flight CSV log: {flight_log_file}")
 # =========================
 # Basic Config
 # =========================
-WIDTH, HEIGHT, FPS = 640, 480, 15
+WIDTH, HEIGHT, FPS = 640, 480, 30
 FRAME_TIMEOUT_MS = 1000
 MAX_LOST = 5
 RESTART_WAIT_SEC = 2
 
 MODEL_PATH = "yolo11n.pt"
-CONF_THRES = 0.4
+CONF_THRES = 0.25
 
 # yaw control
 Kp = 10.0
@@ -91,7 +91,7 @@ pipeline = None
 cfg = None
 align = None
 target_lost_count = 0
-MAX_TARGET_LOST = 8
+MAX_TARGET_LOST = 16
 
 FOLLOW_REAL = os.environ.get("FOLLOW_REAL") == "1"
 PX4_ADDR = os.environ.get("PX4_ADDR", "serial:///dev/serial0:57600")
@@ -111,10 +111,13 @@ latest_follow_command = {
 # YOLO model
 # =========================
 try:
-    model = YOLO(MODEL_PATH)
-    logger.info(f"YOLO model loaded: {MODEL_PATH}")
+    model = HailoPersonDetector(conf_threshold=CONF_THRES)
+    atexit.register(model.close)
+    logger.info(f"Hailo YOLO11n loaded: {model.hef_path}")
+    print(f"[HAILO] HEF: {model.hef_path}", flush=True)
 except Exception as e:
-    logger.error(f"Failed to load YOLO model: {e}")
+    logger.error(f"Failed to load Hailo detector: {e}")
+    print(f"[HAILO] detector load failed: {e}", flush=True)
     model = None
 # =========================
 # RealSense helpers
@@ -519,50 +522,62 @@ def camera_loop():
 
             if model is not None:
                 try:
-                    results = model(color_image, imgsz=320, conf=CONF_THRES, verbose=False)
+                    people = model.detect(color_image)
+                    det_count = len(people)
 
-                    for result in results:
-                        boxes = result.boxes
-                        names = result.names
-                        det_count += len(boxes)
+                    model._debug_count = getattr(model, "_debug_count", 0) + 1
+                    if model._debug_count % 30 == 0:
+                        print(
+                            f"[HAILO DEBUG] people={len(people)} "
+                            f"first={people[:1]}",
+                            flush=True,
+                        )
 
-                        for box in boxes:
-                            cls_id = int(box.cls[0].item())
-                            conf = float(box.conf[0].item())
-                            x1, y1, x2, y2 = map(int, box.xyxy[0].tolist())
+                    for person in people:
+                        conf = float(person["confidence"])
+                        x1 = int(person["x1"])
+                        y1 = int(person["y1"])
+                        x2 = int(person["x2"])
+                        y2 = int(person["y2"])
 
-                            class_name = names[cls_id]
-                            label = f"{class_name} {conf:.2f}"
+                        label = f"person {conf:.2f}"
+                        area = (x2 - x1) * (y2 - y1)
 
-                            if class_name == "person" and conf >= CONF_THRES:
-                                area = (x2 - x1) * (y2 - y1)
-                                person_boxes.append({
-                                    "x1": x1,
-                                    "y1": y1,
-                                    "x2": x2,
-                                    "y2": y2,
-                                    "cx": (x1 + x2) / 2.0,
-                                    "cy": (y1 + y2) / 2.0,
-                                    "area": area,
-                                    "label": label,
-                                })
-                                color = (0, 0, 255)
-                            else:
-                                color = (0, 255, 0)
+                        person_boxes.append({
+                            "x1": x1,
+                            "y1": y1,
+                            "x2": x2,
+                            "y2": y2,
+                            "cx": (x1 + x2) / 2.0,
+                            "cy": (y1 + y2) / 2.0,
+                            "area": area,
+                            "label": label,
+                        })
 
-                            cv2.rectangle(color_image, (x1, y1), (x2, y2), color, 2)
-                            cv2.putText(
-                                color_image,
-                                label,
-                                (x1, max(y1 - 10, 20)),
-                                cv2.FONT_HERSHEY_SIMPLEX,
-                                0.6,
-                                color,
-                                2,
-                            )
+                        color = (0, 0, 255)
+                        cv2.rectangle(
+                            color_image,
+                            (x1, y1),
+                            (x2, y2),
+                            color,
+                            2,
+                        )
+                        cv2.putText(
+                            color_image,
+                            label,
+                            (x1, max(y1 - 10, 20)),
+                            cv2.FONT_HERSHEY_SIMPLEX,
+                            0.6,
+                            color,
+                            2,
+                        )
 
                 except Exception as e:
-                    logger.warning(f"YOLO inference failed: {e}")
+                    logger.warning(f"Hailo inference failed: {e}")
+                    print(
+                        f"[HAILO ERROR] {type(e).__name__}: {e}",
+                        flush=True,
+                    )
 
             with lock:
                 current_person_boxes = [dict(b) for b in person_boxes]
