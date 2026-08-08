@@ -58,21 +58,21 @@ MODEL_PATH = "yolo11n.pt"
 CONF_THRES = 0.25
 
 # yaw control
-Kp = 10.0
+Kp = 12.0
 DEADBAND = 0.06
 MAX_YAW_CMD = 30.0
 
 # forward distance control
 TARGET_DIST_M = 4.0
 DIST_DEADBAND = 0.30
-Kp_forward = 0.30
+Kp_forward = 0.38
 MAX_FORWARD_CMD = 0.8
 
 # altitude hold in Offboard mode
 # positive down_m_s = descend, negative down_m_s = climb
-ALT_HOLD_TARGET_M = float(os.environ.get("FOLLOW_ALT_M", "1.5"))
+ALT_HOLD_TARGET_M = float(os.environ.get("FOLLOW_ALT_M", "1.0"))
 ALT_HOLD_DEADBAND_M = 0.10
-ALT_HOLD_KP = 0.35
+ALT_HOLD_KP = 0.45
 MAX_VERTICAL_CMD = 0.20
 
 DEPTH_MIN_M = 0.3
@@ -105,6 +105,15 @@ latest_follow_command = {
     "yaw_deg_s": 0.0,
     "target_locked": False,
     "source": "no-target",
+     # PX4 altitude / vertical-control status
+    "px4_alt_now_m": None,
+    "alt_target_m": ALT_HOLD_TARGET_M,
+    "framing_target_px": None,
+    "alt_error_m": None,
+    "vertical_down_cmd_m_s": 0.0,
+    "control_mode": "DRY / VISION ONLY" if not FOLLOW_REAL else "PX4 CONNECTING",
+
+    
     "updated_monotonic": time.monotonic(),
 }
 # =========================
@@ -383,6 +392,24 @@ async def follow_control_loop():
             down_cmd = compute_altitude_hold_down_cmd(current_alt)
             alt_error = None if current_alt is None else current_alt - ALT_HOLD_TARGET_M
 
+
+            if age > 0.5 or not cmd["target_locked"]:
+                control_mode = "OFFBOARD / ALT HOLD / NO TARGET"
+            else:
+                control_mode = "OFFBOARD / FOLLOW + ALT HOLD"
+
+            with lock:
+                latest_follow_command["px4_alt_now_m"] = (
+                    None if current_alt is None else float(current_alt)
+                )
+                latest_follow_command["alt_target_m"] = float(ALT_HOLD_TARGET_M)
+                latest_follow_command["framing_target_px"] = None
+                latest_follow_command["alt_error_m"] = (
+                    None if alt_error is None else float(alt_error)
+                )
+                latest_follow_command["vertical_down_cmd_m_s"] = float(down_cmd)
+                latest_follow_command["control_mode"] = control_mode
+                
             append_flight_log({
                 "timestamp": datetime.now().isoformat(timespec="milliseconds"),
                 "monotonic": f"{now:.3f}",
@@ -836,10 +863,61 @@ WEBRTC_HTML = """
 </head>
 <body style="margin:0;background:#111;color:white;font-family:sans-serif;">
     <main style="width:min(1100px,94vw);margin:24px auto;display:grid;grid-template-columns:minmax(0,1fr) 280px;gap:18px;align-items:start;">
-        <section>
-            <video id="video" autoplay playsinline muted style="width:100%;background:#000;cursor:crosshair;"></video>
-            <div id="status" style="margin-top:10px;color:#b7c0c7;">Connecting...</div>
-        </section>
+
+<section>
+    <video id="video" autoplay playsinline muted
+           style="width:100%;background:#000;cursor:crosshair;"></video>
+
+    <div id="status"
+         style="margin-top:10px;color:#b7c0c7;">
+        Connecting...
+    </div>
+
+    <!-- PX4 altitude debug panel -->
+    <div style="
+        margin-top:14px;
+        background:#1d1d1d;
+        border:1px solid #444;
+        border-radius:8px;
+        padding:12px 14px;
+        font-size:16px;
+        line-height:1.6;
+    ">
+        <div style="font-weight:bold;margin-bottom:6px;">
+            PX4 VERTICAL DEBUG
+        </div>
+
+        <div>
+            PX4 Alt Now:
+            <span id="px4AltNow">N/A</span>
+        </div>
+
+        <div>
+            Alt Target:
+            <span id="altTarget">N/A</span>
+        </div>
+
+        <div>
+            Framing Target:
+            <span id="framingTarget">N/A</span>
+        </div>
+
+        <div>
+            Alt Error:
+            <span id="altError">N/A</span>
+        </div>
+
+        <div>
+            Vertical Cmd / Down Cmd:
+            <span id="verticalCmd">+0.00 m/s — HOLD</span>
+        </div>
+
+        <div>
+            Control Mode:
+            <span id="controlMode">UNKNOWN</span>
+        </div>
+    </div>
+</section>
 
         <aside style="background:#1d1d1d;border:1px solid #444;border-radius:8px;padding:14px;font-size:18px;line-height:1.55;">
             <div>Mode: <span id="mode">DRY</span></div>
@@ -874,6 +952,54 @@ WEBRTC_HTML = """
             document.getElementById("yaw").textContent = signed(s.yaw, 1);
             document.getElementById("source").textContent = s.source;
             document.getElementById("age").textContent = Number(s.age).toFixed(2);
+            
+            // PX4 altitude now
+            document.getElementById("px4AltNow").textContent =
+                s.px4_alt_now == null
+                    ? "N/A"
+                    : Number(s.px4_alt_now).toFixed(2) + " m";
+
+
+            // Altitude target
+            document.getElementById("altTarget").textContent =
+                s.alt_target == null
+                    ? "N/A"
+                    : Number(s.alt_target).toFixed(2) + " m";
+
+
+            // Framing target
+            document.getElementById("framingTarget").textContent =
+                s.framing_target == null
+                    ? "N/A"
+                    : Number(s.framing_target).toFixed(0) + " px";
+
+
+            // Altitude error
+            document.getElementById("altError").textContent =
+                s.alt_error == null
+                    ? "N/A"
+                    : signed(s.alt_error, 2) + " m";
+
+
+            // Actual vertical command sent toward PX4
+            const vertical = Number(s.vertical_down_cmd);
+
+            let verticalAction = "— HOLD";
+
+            if (vertical > 0.01) {
+                verticalAction = "↓ DESCEND";
+            }
+            else if (vertical < -0.01) {
+                verticalAction = "↑ CLIMB";
+            }
+
+            document.getElementById("verticalCmd").textContent =
+                signed(vertical, 2) + " m/s " + verticalAction;
+
+
+            // Current control mode
+            document.getElementById("controlMode").textContent =
+                s.control_mode || "UNKNOWN";
         } catch (e) {}
     }
 
@@ -985,7 +1111,14 @@ async def webrtc_status(request):
         "yaw": cmd["yaw_deg_s"],
         "source": cmd["source"],
         "age": age,
-        "follow_real": FOLLOW_REAL,
+        
+        # PX4 altitude / vertical debug status
+        "px4_alt_now": cmd["px4_alt_now_m"],
+        "alt_target": cmd["alt_target_m"],
+        "framing_target": cmd["framing_target_px"],
+        "alt_error": cmd["alt_error_m"],
+        "vertical_down_cmd": cmd["vertical_down_cmd_m_s"],
+        "control_mode": cmd["control_mode"],
     })
 
 
