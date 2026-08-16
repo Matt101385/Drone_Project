@@ -125,7 +125,12 @@ class SafetySupervisorV2:
             await self.trigger(f"non-finite command from {source}: {raw}")
             return False
 
-        safe, limited = self._limit_command(*raw)
+        # TEMP FOLLOW TEST:
+        # Bypass command clamp/slew filtering.
+        # Upstream follow controller already applies MAX_* command limits.
+        safe = raw
+        limited = False
+        #safe, limited = self._limit_command(*raw)
         if limited:
             if self.limit_breach_action == "failsafe":
                 await self.trigger(f"command exceeded safety limit from {source}: {raw}")

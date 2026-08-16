@@ -70,7 +70,7 @@ MAX_FORWARD_CMD = 0.8
 
 # altitude hold in Offboard mode
 # positive down_m_s = descend, negative down_m_s = climb
-ALT_HOLD_TARGET_M = float(os.environ.get("FOLLOW_ALT_M", "1.0"))
+ALT_HOLD_TARGET_M = float(os.environ.get("FOLLOW_ALT_M", "1.5"))
 ALT_HOLD_DEADBAND_M = 0.10
 ALT_HOLD_KP = 0.45
 MAX_VERTICAL_CMD = 0.20
