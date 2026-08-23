@@ -1,4 +1,5 @@
 import time
+import math
 import atexit
 import threading
 import numpy as np
@@ -58,21 +59,21 @@ MODEL_PATH = "yolo11n.pt"
 CONF_THRES = 0.25
 
 # yaw control
-Kp = 12.0
+Kp = 20.0
 DEADBAND = 0.06
 MAX_YAW_CMD = 30.0
 
 # forward distance control
 TARGET_DIST_M = 4.0
 DIST_DEADBAND = 0.30
-Kp_forward = 0.38
+Kp_forward = 0.65
 MAX_FORWARD_CMD = 0.8
 
 # altitude hold in Offboard mode
 # positive down_m_s = descend, negative down_m_s = climb
 ALT_HOLD_TARGET_M = float(os.environ.get("FOLLOW_ALT_M", "1.5"))
 ALT_HOLD_DEADBAND_M = 0.10
-ALT_HOLD_KP = 0.45
+ALT_HOLD_KP = 0.50
 MAX_VERTICAL_CMD = 0.20
 
 DEPTH_MIN_M = 0.3
@@ -111,6 +112,10 @@ latest_follow_command = {
     "framing_target_px": None,
     "alt_error_m": None,
     "vertical_down_cmd_m_s": 0.0,
+    "px4_yaw_relative_deg": None,
+    "px4_yaw_rate_actual_deg_s": None,
+    "px4_forward_actual_m_s": None,
+    "px4_forward_relative_m": None,
     "control_mode": "DRY / VISION ONLY" if not FOLLOW_REAL else "PX4 CONNECTING",
 
     
@@ -280,9 +285,94 @@ def compute_altitude_hold_down_cmd(current_alt_m):
     return max(min(down_cmd, MAX_VERTICAL_CMD), -MAX_VERTICAL_CMD)
 
 
-async def watch_relative_altitude(drone, state):
-    async for pos in drone.telemetry.position():
-        state["relative_altitude_m"] = float(pos.relative_altitude_m)
+async def watch_px4_state(drone, state):
+
+    async def watch_position():
+        # Existing PX4 relative altitude
+        async for pos in drone.telemetry.position():
+            state["relative_altitude_m"] = float(
+                pos.relative_altitude_m
+            )
+
+    async def watch_attitude():
+        # Actual PX4 yaw angle
+        async for attitude in drone.telemetry.attitude_euler():
+            yaw_deg = float(attitude.yaw_deg)
+            state["yaw_abs_deg"] = yaw_deg
+
+            # Only accumulate after Offboard zero has been set
+            if not state["offboard_zeroed"]:
+                continue
+
+            previous_yaw = state["yaw_prev_deg"]
+
+            if previous_yaw is None:
+                state["yaw_prev_deg"] = yaw_deg
+                continue
+
+            # Unwrap 360/0 degree crossing
+            delta_yaw = (
+                (yaw_deg - previous_yaw + 180.0) % 360.0
+            ) - 180.0
+
+            state["yaw_relative_deg"] += delta_yaw
+            state["yaw_prev_deg"] = yaw_deg
+
+    async def watch_yaw_rate():
+        # Actual yaw rate measured/estimated by PX4
+        async for angular in (
+            drone.telemetry.attitude_angular_velocity_body()
+        ):
+            state["yaw_rate_actual_deg_s"] = math.degrees(
+                float(angular.yaw_rad_s)
+            )
+
+    async def watch_velocity():
+        # Actual PX4 ground velocity
+        async for vel in drone.telemetry.velocity_ned():
+
+            yaw_deg = state["yaw_abs_deg"]
+
+            if yaw_deg is None:
+                continue
+
+            yaw_rad = math.radians(yaw_deg)
+
+            # Convert NED velocity into aircraft Forward direction
+            forward_m_s = (
+                float(vel.north_m_s) * math.cos(yaw_rad)
+                +
+                float(vel.east_m_s) * math.sin(yaw_rad)
+            )
+
+            state["forward_actual_m_s"] = forward_m_s
+
+            now = time.monotonic()
+
+            if state["offboard_zeroed"]:
+                previous_t = state["forward_prev_t"]
+
+                if previous_t is not None:
+                    dt = now - previous_t
+
+                    # Ignore abnormal telemetry gaps
+                    if 0.0 < dt < 0.5:
+                        state["forward_relative_m"] += (
+                            forward_m_s * dt
+                        )
+
+                state["forward_prev_t"] = now
+
+    await asyncio.gather(
+        watch_position(),
+        watch_attitude(),
+        watch_yaw_rate(),
+        watch_velocity(),
+    )
+        
+        
+        
+        
 async def wait_for_altitude_sample(state, timeout_s=3.0):
     start = time.monotonic()
     while state.get("relative_altitude_m") is None:
@@ -332,10 +422,30 @@ async def follow_control_loop():
     print("[PX4] connect returned", flush=True)
 
     await wait_until_connected(drone)
-    altitude_state = {"relative_altitude_m": None}
-    altitude_task = asyncio.create_task(
-        watch_relative_altitude(drone, altitude_state)
+    
+    px4_state = {
+        # Existing altitude
+        "relative_altitude_m": None,
+
+        # Yaw
+        "yaw_abs_deg": None,
+        "yaw_prev_deg": None,
+        "yaw_relative_deg": 0.0,
+        "yaw_rate_actual_deg_s": None,
+
+        # Forward
+        "forward_actual_m_s": None,
+        "forward_relative_m": 0.0,
+        "forward_prev_t": None,
+
+        # Zero is NOT active until Offboard starts
+        "offboard_zeroed": False,
+    }
+
+    px4_state_task = asyncio.create_task(
+        watch_px4_state(drone, px4_state)
     )
+    
     supervisor = SafetySupervisorV2(
         drone,
         SafetyLimits(
@@ -358,7 +468,7 @@ async def follow_control_loop():
     await supervisor.install()
 
     try:
-        initial_alt = await wait_for_altitude_sample(altitude_state)
+        initial_alt = await wait_for_altitude_sample(px4_state)
         if initial_alt is None:
             print("[ALT] no altitude sample; refusing to enter Offboard altitude hold.")
             return
@@ -381,6 +491,24 @@ async def follow_control_loop():
             print(f"[PX4] Offboard start failed: {exc}")
             return
 
+        # ==================================================
+        # OFFBOARD ZERO REFERENCE
+        # ==================================================
+
+        px4_state["yaw_relative_deg"] = 0.0
+        px4_state["yaw_prev_deg"] = px4_state["yaw_abs_deg"]
+
+        px4_state["forward_relative_m"] = 0.0
+        px4_state["forward_prev_t"] = time.monotonic()
+
+        px4_state["offboard_zeroed"] = True
+
+        print(
+            "[PX4 ZERO] "
+            "Yaw Relative = 0.0 deg | "
+            "Forward Relative = 0.0 m"
+        )
+
         supervisor.mark_offboard_started()
         print("[PX4] Offboard active. Safety Supervisor is controlling commands.")
         last_alt_print = 0.0
@@ -388,7 +516,7 @@ async def follow_control_loop():
             cmd = read_follow_command()
             now = time.monotonic()
             age = now - cmd["updated_monotonic"]
-            current_alt = altitude_state.get("relative_altitude_m")
+            current_alt = px4_state.get("relative_altitude_m")
             down_cmd = compute_altitude_hold_down_cmd(current_alt)
             alt_error = None if current_alt is None else current_alt - ALT_HOLD_TARGET_M
 
@@ -409,6 +537,30 @@ async def follow_control_loop():
                 )
                 latest_follow_command["vertical_down_cmd_m_s"] = float(down_cmd)
                 latest_follow_command["control_mode"] = control_mode
+                latest_follow_command["px4_yaw_relative_deg"] = (
+                    float(px4_state["yaw_relative_deg"])
+                    if px4_state["offboard_zeroed"]
+                    else None
+                )
+
+                latest_follow_command["px4_yaw_rate_actual_deg_s"] = (
+                    None
+                    if px4_state["yaw_rate_actual_deg_s"] is None
+                    else float(px4_state["yaw_rate_actual_deg_s"])
+                )
+
+                latest_follow_command["px4_forward_actual_m_s"] = (
+                    None
+                    if px4_state["forward_actual_m_s"] is None
+                    else float(px4_state["forward_actual_m_s"])
+                )
+
+                latest_follow_command["px4_forward_relative_m"] = (
+                    float(px4_state["forward_relative_m"])
+                    if px4_state["offboard_zeroed"]
+                    else None
+                )
+                
                 
             append_flight_log({
                 "timestamp": datetime.now().isoformat(timespec="milliseconds"),
@@ -460,9 +612,9 @@ async def follow_control_loop():
             await drone.offboard.stop()
         except Exception:
             pass
-        altitude_task.cancel()
+        px4_state_task.cancel()
         try:
-            await altitude_task
+            await px4_state_task
         except asyncio.CancelledError:
             pass
 
@@ -884,7 +1036,7 @@ WEBRTC_HTML = """
         line-height:1.6;
     ">
         <div style="font-weight:bold;margin-bottom:6px;">
-            PX4 VERTICAL DEBUG
+            PX4 ACTUAL STATE
         </div>
 
         <div>
@@ -915,6 +1067,43 @@ WEBRTC_HTML = """
         <div>
             Control Mode:
             <span id="controlMode">UNKNOWN</span>
+        </div>
+        <div style="margin-top:10px;font-weight:bold;">
+            YAW
+        </div>
+
+        <div>
+            Yaw CMD:
+            <span id="yawCmd">+0.0 deg/s</span>
+        </div>
+
+        <div>
+            Yaw Actual Rate:
+            <span id="yawActualRate">N/A</span>
+        </div>
+
+        <div>
+            Yaw Relative:
+            <span id="yawRelative">N/A</span>
+        </div>
+
+        <div style="margin-top:10px;font-weight:bold;">
+            FORWARD
+        </div>
+
+        <div>
+            Forward CMD:
+            <span id="forwardCmd">+0.00 m/s</span>
+        </div>
+
+        <div>
+            Forward Actual:
+            <span id="forwardActual">N/A</span>
+        </div>
+
+        <div>
+            Forward Relative:
+            <span id="forwardRelative">N/A</span>
         </div>
     </div>
 </section>
@@ -953,6 +1142,40 @@ WEBRTC_HTML = """
             document.getElementById("source").textContent = s.source;
             document.getElementById("age").textContent = Number(s.age).toFixed(2);
             
+            // =========================
+            // PX4 YAW ACTUAL STATE
+            // =========================
+
+            document.getElementById("yawCmd").textContent =
+                signed(s.yaw, 1) + " deg/s";
+
+            document.getElementById("yawActualRate").textContent =
+                s.px4_yaw_rate_actual == null
+                    ? "N/A"
+                    : signed(s.px4_yaw_rate_actual, 1) + " deg/s";
+
+            document.getElementById("yawRelative").textContent =
+                s.px4_yaw_relative == null
+                    ? "N/A"
+                    : signed(s.px4_yaw_relative, 1) + "°";
+
+
+            // =========================
+            // PX4 FORWARD ACTUAL STATE
+            // =========================
+
+            document.getElementById("forwardCmd").textContent =
+                signed(s.forward, 2) + " m/s";
+
+            document.getElementById("forwardActual").textContent =
+                s.px4_forward_actual == null
+                    ? "N/A"
+                    : signed(s.px4_forward_actual, 2) + " m/s";
+
+            document.getElementById("forwardRelative").textContent =
+                s.px4_forward_relative == null
+                    ? "N/A"
+                    : signed(s.px4_forward_relative, 2) + " m";
             // PX4 altitude now
             document.getElementById("px4AltNow").textContent =
                 s.px4_alt_now == null
@@ -1114,6 +1337,10 @@ async def webrtc_status(request):
         
         # PX4 altitude / vertical debug status
         "px4_alt_now": cmd["px4_alt_now_m"],
+        "px4_yaw_relative": cmd["px4_yaw_relative_deg"],
+        "px4_yaw_rate_actual": cmd["px4_yaw_rate_actual_deg_s"],
+        "px4_forward_actual": cmd["px4_forward_actual_m_s"],
+        "px4_forward_relative": cmd["px4_forward_relative_m"],
         "alt_target": cmd["alt_target_m"],
         "framing_target": cmd["framing_target_px"],
         "alt_error": cmd["alt_error_m"],
