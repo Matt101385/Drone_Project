@@ -16,7 +16,7 @@ import asyncio
 from aiohttp import web
 from aiortc import RTCPeerConnection, RTCSessionDescription, VideoStreamTrack
 from av import VideoFrame
-from safety_supervisor_v2 import SafetyLimits, SafetySupervisorV2
+
 
 
 
@@ -386,6 +386,37 @@ async def wait_until_connected(drone):
         if state.is_connected:
             print("[PX4] connected")
             return
+        
+async def watch_manual_override(
+    drone,
+    offboard_started_event,
+    manual_override_event,
+):
+    from mavsdk.telemetry import FlightMode
+
+    seen_offboard = False
+
+    async for mode in drone.telemetry.flight_mode():
+        # Do not monitor until our program has started Offboard.
+        if not offboard_started_event.is_set():
+            continue
+
+        # Require seeing OFFBOARD at least once.
+        # This avoids treating an old telemetry sample as manual override.
+        if mode == FlightMode.OFFBOARD:
+            seen_offboard = True
+            continue
+
+        # Only treat leaving OFFBOARD as manual override
+        # after OFFBOARD has actually been observed.
+        if seen_offboard:
+            print(
+                f"[MANUAL OVERRIDE] "
+                f"flight mode changed from OFFBOARD to {mode}",
+                flush=True,
+            )
+            manual_override_event.set()
+            return
 
 
 async def follow_control_loop():
@@ -423,6 +454,20 @@ async def follow_control_loop():
 
     await wait_until_connected(drone)
     
+    # ==================================================
+    # MANUAL OVERRIDE WATCHER
+    # ==================================================
+    offboard_started_event = asyncio.Event()
+    manual_override_event = asyncio.Event()
+
+    manual_override_task = asyncio.create_task(
+        watch_manual_override(
+            drone,
+            offboard_started_event,
+            manual_override_event,
+        )
+    )
+    
     px4_state = {
         # Existing altitude
         "relative_altitude_m": None,
@@ -446,26 +491,7 @@ async def follow_control_loop():
         watch_px4_state(drone, px4_state)
     )
     
-    supervisor = SafetySupervisorV2(
-        drone,
-        SafetyLimits(
-            roll_limit_deg=25.0,
-            pitch_limit_deg=25.0,
-            command_timeout_s=0.7,
-            max_forward_m_s=MAX_FORWARD_CMD,
-            max_right_m_s=0.0,
-            max_down_m_s=MAX_VERTICAL_CMD,
-            max_yaw_deg_s=MAX_YAW_CMD,
-            max_forward_accel_m_s2=1.0,
-            max_right_accel_m_s2=0.4,
-            max_down_accel_m_s2=0.3,
-            max_yaw_accel_deg_s2=90.0,
-        ),
-        limit_breach_action="warn",
-        attitude_breach_action="warn",
-        failsafe_action="hold",
-    )
-    await supervisor.install()
+    
 
     try:
         initial_alt = await wait_for_altitude_sample(px4_state)
@@ -491,6 +517,7 @@ async def follow_control_loop():
             print(f"[PX4] Offboard start failed: {exc}")
             return
 
+        offboard_started_event.set()
         # ==================================================
         # OFFBOARD ZERO REFERENCE
         # ==================================================
@@ -509,8 +536,8 @@ async def follow_control_loop():
             "Forward Relative = 0.0 m"
         )
 
-        supervisor.mark_offboard_started()
-        print("[PX4] Offboard active. Safety Supervisor is controlling commands.")
+        
+        print("[PX4] Offboard active. Commands are sent directly to PX4.")
         last_alt_print = 0.0
         while True:
             cmd = read_follow_command()
@@ -583,42 +610,63 @@ async def follow_control_loop():
                     f"down_cmd={down_cmd:+.2f}m/s"
                 )
                 last_alt_print = now
+            
+            if manual_override_event.is_set():
+                print(
+                    "[PX4] Manual override active. Stopping command loop.",
+                    flush=True,
+                )
+                break
+
             if age > 0.5 or not cmd["target_locked"]:
-                await supervisor.send_velocity_body(
-                    0.0,
-                    0.0,
-                    down_cmd,
-                    0.0,
-                    source=f"hold-no-target-age-{age:.2f}s",
+                await drone.offboard.set_velocity_body(
+                    VelocityBodyYawspeed(
+                        0.0,
+                        0.0,
+                        down_cmd,
+                        0.0,
+                    )
                 )
             else:
-                await supervisor.send_velocity_body(
-                    cmd["forward_m_s"],
-                    cmd["right_m_s"],
-                    down_cmd,
-                    cmd["yaw_deg_s"],
-                    source=cmd["source"],
+                await drone.offboard.set_velocity_body(
+                    VelocityBodyYawspeed(
+                        cmd["forward_m_s"],
+                        cmd["right_m_s"],
+                        down_cmd,
+                        cmd["yaw_deg_s"],
+                    )
                 )
 
             await asyncio.sleep(1.0 / FOLLOW_COMMAND_HZ)
+            
 
     finally:
-        print("[PX4] cleanup: zero command, stop Offboard")
-        try:
-            await supervisor.send_zero("program exit")
-        except Exception:
-            pass
-        try:
-            await drone.offboard.stop()
-        except Exception:
-            pass
+        if manual_override_event.is_set():
+            print(
+                "[PX4] cleanup: manual override detected; "
+                "no further Offboard command will be sent.",
+                flush=True,
+            )
+        else:
+            print("[PX4] cleanup: stopping Offboard.", flush=True)
+            try:
+                await drone.offboard.stop()
+            except Exception as exc:
+                print(f"[PX4] Offboard stop warning: {exc}", flush=True)
+            
         px4_state_task.cancel()
         try:
             await px4_state_task
         except asyncio.CancelledError:
             pass
 
-        await supervisor.uninstall()
+        manual_override_task.cancel()
+        try:
+            await manual_override_task
+        except asyncio.CancelledError:
+            pass   
+
+        
 
 def run_follow_control_loop():
     print("[PX4] thread started", flush=True)
