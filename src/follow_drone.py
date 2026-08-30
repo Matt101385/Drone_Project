@@ -5,10 +5,8 @@ import threading
 import numpy as np
 import pyrealsense2 as rs
 import cv2
-from flask import Flask, Response, request, jsonify
 import os
 import logging
-import csv
 from datetime import datetime
 from hailo_person_detector import HailoPersonDetector
 import asyncio
@@ -31,10 +29,6 @@ log_file = os.path.join(
     f"stream_{datetime.now().strftime('%Y%m%d')}.log"
 )
 
-flight_log_file = os.path.join(
-    log_dir,
-    f"flight_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
-)
 
 logging.basicConfig(
     filename=log_file,
@@ -45,8 +39,7 @@ logging.basicConfig(
 logger = logging.getLogger()
 logger.info("YOLO stream program started")
 print(f"[LOG] stream log: {log_file}", flush=True)
-print(f"[LOG] flight csv: {flight_log_file}", flush=True)
-logger.info(f"Flight CSV log: {flight_log_file}")
+
 # =========================
 # Basic Config
 # =========================
@@ -70,22 +63,17 @@ Kp_forward = 0.65
 MAX_FORWARD_CMD = 0.8
 
 # altitude hold in Offboard mode
-# positive down_m_s = descend, negative down_m_s = climb
-ALT_HOLD_TARGET_M = float(os.environ.get("FOLLOW_ALT_M", "1.5"))
-ALT_HOLD_DEADBAND_M = 0.10
-ALT_HOLD_KP = 0.50
-MAX_VERTICAL_CMD = 0.20
 
 DEPTH_MIN_M = 0.3
-DEPTH_MAX_M = 6.0
+DEPTH_MAX_M = 10.0
 
-app = Flask(__name__)
 
-latest_jpeg = None
+
+
 latest_frame = None
 webrtc_pcs = set()
-lock = threading.Lock()
-current_person_boxes = []
+vision_lock = threading.Lock()
+command_lock = threading.Lock() 
 selected_click = None
 selected_target = None
 pipeline = None
@@ -95,27 +83,20 @@ target_lost_count = 0
 MAX_TARGET_LOST = 16
 
 FOLLOW_REAL = os.environ.get("FOLLOW_REAL") == "1"
-PX4_ADDR = os.environ.get("PX4_ADDR", "serial:///dev/serial0:57600")
+PX4_ADDR = os.environ.get("PX4_ADDR", "serial:///dev/serial0:921600")
 FOLLOW_COMMAND_HZ = 10
 FOLLOW_COMMAND_INTERVAL = 1.0 / FOLLOW_COMMAND_HZ
 
+# Position Follow
+POSITION_SETPOINT_HZ = 10.0
+POSITION_FOLLOW_LEASH_M = 1.00
+POSITION_FOLLOW_YAW_LEASH_DEG = 30.0
+
 latest_follow_command = {
     "forward_m_s": 0.0,
-    "right_m_s": 0.0,
-    "down_m_s": 0.0,
     "yaw_deg_s": 0.0,
     "target_locked": False,
     "source": "no-target",
-     # PX4 altitude / vertical-control status
-    "px4_alt_now_m": None,
-    "alt_target_m": ALT_HOLD_TARGET_M,
-    "framing_target_px": None,
-    "alt_error_m": None,
-    "vertical_down_cmd_m_s": 0.0,
-    "px4_yaw_relative_deg": None,
-    "px4_yaw_rate_actual_deg_s": None,
-    "px4_forward_actual_m_s": None,
-    "px4_forward_relative_m": None,
     "control_mode": "DRY / VISION ONLY" if not FOLLOW_REAL else "PX4 CONNECTING",
 
     
@@ -178,63 +159,59 @@ def restart_pipeline():
         return False
 
 
-def generate_placeholder_jpeg(text="Camera reconnecting..."):
-    img = np.zeros((HEIGHT, WIDTH, 3), dtype=np.uint8)
-    cv2.putText(
-        img,
-        text,
-        (40, HEIGHT // 2),
-        cv2.FONT_HERSHEY_SIMPLEX,
-        1.0,
-        (0, 255, 255),
-        2,
-        cv2.LINE_AA,
-    )
-    ok, buf = cv2.imencode(".jpg", img, [int(cv2.IMWRITE_JPEG_QUALITY), 60])
-    if not ok:
-        return None
-    return buf.tobytes()
-
 
 def point_in_box(px, py, box):
     return box["x1"] <= px <= box["x2"] and box["y1"] <= py <= box["y2"]
 
 
 def get_target_distance(depth_frame, cx, cy, box, win=5):
-    x1, y1, x2, y2 = box["x1"], box["y1"], box["x2"], box["y2"]
+    x1 = int(box["x1"])
+    y1 = int(box["y1"])
+    x2 = int(box["x2"])
+    y2 = int(box["y2"])
+
+    box_w = max(x2 - x1, 1)
+    box_h = max(y2 - y1, 1)
+
+    # Sample the person's torso instead of only an 11x11
+    # patch at the bounding-box center.
+    roi_x1 = int(x1 + 0.30 * box_w)
+    roi_x2 = int(x1 + 0.70 * box_w)
+    roi_y1 = int(y1 + 0.20 * box_h)
+    roi_y2 = int(y1 + 0.65 * box_h)
 
     samples = []
-    for dy in range(-win, win + 1):
-        for dx in range(-win, win + 1):
-            px = int(cx + dx)
-            py = int(cy + dy)
 
-            if px < x1 or px > x2 or py < y1 or py > y2:
-                continue
-            if px < 0 or py < 0 or px >= WIDTH or py >= HEIGHT:
+    # Skip pixels to keep CPU cost low.
+    for py in range(roi_y1, roi_y2 + 1, 4):
+        for px in range(roi_x1, roi_x2 + 1, 4):
+            if (
+                px < 0
+                or py < 0
+                or px >= WIDTH
+                or py >= HEIGHT
+            ):
                 continue
 
             d = depth_frame.get_distance(px, py)
+
             if DEPTH_MIN_M <= d <= DEPTH_MAX_M:
                 samples.append(d)
 
-    if not samples:
+    # Do not trust a tiny number of surviving depth pixels.
+    if len(samples) < 20:
         return None
 
     return float(np.median(samples))
 
 def update_follow_command(
     forward_m_s,
-    right_m_s,
-    down_m_s,
     yaw_deg_s,
     target_locked,
     source,
 ):
-    with lock:
+    with command_lock:
         latest_follow_command["forward_m_s"] = float(forward_m_s)
-        latest_follow_command["right_m_s"] = float(right_m_s)
-        latest_follow_command["down_m_s"] = float(down_m_s)
         latest_follow_command["yaw_deg_s"] = float(yaw_deg_s)
         latest_follow_command["target_locked"] = bool(target_locked)
         latest_follow_command["source"] = str(source)
@@ -242,144 +219,38 @@ def update_follow_command(
 
 
 def read_follow_command():
-    with lock:
+    with command_lock:
         return dict(latest_follow_command)
 
-def append_flight_log(row):
-    file_exists = os.path.exists(flight_log_file)
 
-    with open(flight_log_file, "a", newline="") as f:
-        writer = csv.DictWriter(
-            f,
-            fieldnames=[
-                "timestamp",
-                "monotonic",
-                "mode",
-                "locked",
-                "forward_m_s",
-                "right_m_s",
-                "down_m_s",
-                "yaw_deg_s",
-                "altitude_m",
-                "alt_error_m",
-                "alt_down_cmd_m_s",
-                "source",
-            ],
-        )
 
-        if not file_exists:
-            writer.writeheader()
-
-        writer.writerow(row)
-
-def compute_altitude_hold_down_cmd(current_alt_m):
-    if current_alt_m is None:
-        return 0.0
-
-    alt_error_m = float(current_alt_m) - ALT_HOLD_TARGET_M
-
-    if abs(alt_error_m) < ALT_HOLD_DEADBAND_M:
-        return 0.0
-
-    down_cmd = ALT_HOLD_KP * alt_error_m
-    return max(min(down_cmd, MAX_VERTICAL_CMD), -MAX_VERTICAL_CMD)
 
 
 async def watch_px4_state(drone, state):
 
-    async def watch_position():
-        # Existing PX4 relative altitude
-        async for pos in drone.telemetry.position():
-            state["relative_altitude_m"] = float(
-                pos.relative_altitude_m
-            )
+    
+
+    async def watch_local_position():
+        async for pv in drone.telemetry.position_velocity_ned():
+            state["north_m"] = float(pv.position.north_m)
+            state["east_m"] = float(pv.position.east_m)
+            state["down_m"] = float(pv.position.down_m)
 
     async def watch_attitude():
-        # Actual PX4 yaw angle
         async for attitude in drone.telemetry.attitude_euler():
-            yaw_deg = float(attitude.yaw_deg)
-            state["yaw_abs_deg"] = yaw_deg
+            state["yaw_abs_deg"] = float(attitude.yaw_deg)
 
-            # Only accumulate after Offboard zero has been set
-            if not state["offboard_zeroed"]:
-                continue
 
-            previous_yaw = state["yaw_prev_deg"]
 
-            if previous_yaw is None:
-                state["yaw_prev_deg"] = yaw_deg
-                continue
-
-            # Unwrap 360/0 degree crossing
-            delta_yaw = (
-                (yaw_deg - previous_yaw + 180.0) % 360.0
-            ) - 180.0
-
-            state["yaw_relative_deg"] += delta_yaw
-            state["yaw_prev_deg"] = yaw_deg
-
-    async def watch_yaw_rate():
-        # Actual yaw rate measured/estimated by PX4
-        async for angular in (
-            drone.telemetry.attitude_angular_velocity_body()
-        ):
-            state["yaw_rate_actual_deg_s"] = math.degrees(
-                float(angular.yaw_rad_s)
-            )
-
-    async def watch_velocity():
-        # Actual PX4 ground velocity
-        async for vel in drone.telemetry.velocity_ned():
-
-            yaw_deg = state["yaw_abs_deg"]
-
-            if yaw_deg is None:
-                continue
-
-            yaw_rad = math.radians(yaw_deg)
-
-            # Convert NED velocity into aircraft Forward direction
-            forward_m_s = (
-                float(vel.north_m_s) * math.cos(yaw_rad)
-                +
-                float(vel.east_m_s) * math.sin(yaw_rad)
-            )
-
-            state["forward_actual_m_s"] = forward_m_s
-
-            now = time.monotonic()
-
-            if state["offboard_zeroed"]:
-                previous_t = state["forward_prev_t"]
-
-                if previous_t is not None:
-                    dt = now - previous_t
-
-                    # Ignore abnormal telemetry gaps
-                    if 0.0 < dt < 0.5:
-                        state["forward_relative_m"] += (
-                            forward_m_s * dt
-                        )
-
-                state["forward_prev_t"] = now
-
-    await asyncio.gather(
-        watch_position(),
+    await asyncio.gather(   
+        watch_local_position(),
         watch_attitude(),
-        watch_yaw_rate(),
-        watch_velocity(),
     )
         
         
         
         
-async def wait_for_altitude_sample(state, timeout_s=3.0):
-    start = time.monotonic()
-    while state.get("relative_altitude_m") is None:
-        if time.monotonic() - start > timeout_s:
-            return None
-        await asyncio.sleep(0.05)
-    return state["relative_altitude_m"]
+
 async def wait_until_connected(drone):
     print(f"[PX4] connecting to {PX4_ADDR} ...")
     async for state in drone.core.connection_state():
@@ -419,46 +290,378 @@ async def watch_manual_override(
             return
 
 
+
+# ============================================================
+# POSITION FOLLOW CORE
+# ============================================================
+
+def wrap_180(angle_deg):
+    return (float(angle_deg) + 180.0) % 360.0 - 180.0
+
+
+def wrap_360(angle_deg):
+    return float(angle_deg) % 360.0
+
+
+async def wait_for_local_pose(px4_state, timeout_s=5.0):
+    start = time.monotonic()
+
+    while True:
+        values = (
+            px4_state.get("north_m"),
+            px4_state.get("east_m"),
+            px4_state.get("down_m"),
+            px4_state.get("yaw_abs_deg"),
+        )
+
+        if all(
+            value is not None and math.isfinite(float(value))
+            for value in values
+        ):
+            return {
+                "north_m": float(px4_state["north_m"]),
+                "east_m": float(px4_state["east_m"]),
+                "down_m": float(px4_state["down_m"]),
+                "yaw_deg": wrap_360(px4_state["yaw_abs_deg"]),
+            }
+
+        if time.monotonic() - start > timeout_s:
+            return None
+
+        await asyncio.sleep(0.05)
+
+
+def update_position_follow_status(px4_state, mode):
+    with command_lock:
+        latest_follow_command["control_mode"] = mode
+
+
+async def position_setpoint_sender(
+    drone,
+    target,
+    px4_state,
+    manual_override_event,
+    position_error_event,
+):
+    from mavsdk.offboard import PositionNedYaw
+
+    interval = 1.0 / POSITION_SETPOINT_HZ
+
+    # Diagnostic timing only.
+    # Does not change N/E/D/Yaw control targets.
+    last_send_start = None
+    last_diag_print = time.monotonic()
+    max_send_gap = 0.0
+    max_call_duration = 0.0
+
+    while not manual_override_event.is_set():
+        send_start = time.monotonic()
+
+        if last_send_start is not None:
+            send_gap = send_start - last_send_start
+            max_send_gap = max(
+                max_send_gap,
+                send_gap,
+            )
+
+        last_send_start = send_start
+
+        try:
+            await drone.offboard.set_position_ned(
+                PositionNedYaw(
+                    float(target["north_m"]),
+                    float(target["east_m"]),
+                    float(target["down_m"]),
+                    float(target["yaw_deg"]),
+                )
+            )
+
+            call_duration = (
+                time.monotonic() - send_start
+            )
+
+            max_call_duration = max(
+                max_call_duration,
+                call_duration,
+            )
+
+        except Exception as exc:
+            print(
+                f"[POSITION] set_position_ned failed: {exc}",
+                flush=True,
+            )
+            position_error_event.set()
+            return
+
+        update_position_follow_status(
+            px4_state,
+            target["mode"],
+        )
+
+        now = time.monotonic()
+
+        if now - last_diag_print >= 5.0:
+            print(
+                "[SETPOINT TIMING] "
+                f"max_gap="
+                f"{max_send_gap * 1000:.1f} ms | "
+                f"max_call="
+                f"{max_call_duration * 1000:.1f} ms",
+                flush=True,
+            )
+
+            max_send_gap = 0.0
+            max_call_duration = 0.0
+            last_diag_print = now
+
+        await asyncio.sleep(interval)
+
+
+async def position_follow_loop(
+    target,
+    px4_state,
+    manual_override_event,
+    position_error_event,
+):
+    print(
+        "\n"
+        "========================================\n"
+        "POSITION FOLLOW ACTIVE\n"
+        "Vision updates N/E/Yaw position targets.\n"
+        "Down position remains fixed.\n"
+        "PX4 controls the aircraft position.\n"
+        "========================================",
+        flush=True,
+    )
+
+    fixed_down_m = float(target["down_m"])
+
+    last_time = time.monotonic()
+    last_print = 0.0
+
+    while (
+        not manual_override_event.is_set()
+        and not position_error_event.is_set()
+    ):
+        now = time.monotonic()
+
+        dt = min(
+            max(now - last_time, 0.0),
+            0.20,
+        )
+        last_time = now
+
+        cmd = read_follow_command()
+        age = now - cmd["updated_monotonic"]
+
+        actual_n = px4_state.get("north_m")
+        actual_e = px4_state.get("east_m")
+        actual_yaw = px4_state.get("yaw_abs_deg")
+
+        target_locked = (
+            cmd["target_locked"]
+            and age <= 0.5
+            and actual_n is not None
+            and actual_e is not None
+            and actual_yaw is not None
+        )
+
+        if target_locked:
+            # ------------------------------------------------
+            # FORWARD GUIDANCE -> MOVING POSITION TARGET
+            # ------------------------------------------------
+            heading_rad = math.radians(float(actual_yaw))
+
+            step_m = float(cmd["forward_m_s"]) * dt
+
+            proposed_n = (
+                float(target["north_m"])
+                + step_m * math.cos(heading_rad)
+            )
+
+            proposed_e = (
+                float(target["east_m"])
+                + step_m * math.sin(heading_rad)
+            )
+
+            # ------------------------------------------------
+            # POSITION LEASH
+            # ------------------------------------------------
+            leash_n = proposed_n - float(actual_n)
+            leash_e = proposed_e - float(actual_e)
+
+            leash_distance = math.hypot(
+                leash_n,
+                leash_e,
+            )
+
+            if leash_distance > POSITION_FOLLOW_LEASH_M:
+                scale = (
+                    POSITION_FOLLOW_LEASH_M
+                    / leash_distance
+                )
+
+                proposed_n = (
+                    float(actual_n)
+                    + leash_n * scale
+                )
+
+                proposed_e = (
+                    float(actual_e)
+                    + leash_e * scale
+                )
+
+            target["north_m"] = proposed_n
+            target["east_m"] = proposed_e
+
+            # ------------------------------------------------
+            # YAW GUIDANCE -> MOVING YAW POSITION TARGET
+            # ------------------------------------------------
+            proposed_yaw = wrap_360(
+                float(target["yaw_deg"])
+                + float(cmd["yaw_deg_s"]) * dt
+            )
+
+            yaw_error = wrap_180(
+                proposed_yaw - float(actual_yaw)
+            )
+
+            yaw_error = max(
+                -POSITION_FOLLOW_YAW_LEASH_DEG,
+                min(
+                    POSITION_FOLLOW_YAW_LEASH_DEG,
+                    yaw_error,
+                ),
+            )
+
+            target["yaw_deg"] = wrap_360(
+                float(actual_yaw) + yaw_error
+            )
+
+            # Height remains locked to the position
+            # sampled when Position Follow starts.
+            target["down_m"] = fixed_down_m
+
+            target["mode"] = (
+                "POSITION FOLLOW / TARGET LOCKED"
+            )
+
+        else:
+            if actual_n is not None and actual_e is not None:
+                target["north_m"] = float(actual_n)
+                target["east_m"] = float(actual_e)
+
+            target["down_m"] = fixed_down_m
+
+            target["mode"] = (
+                "POSITION FOLLOW / HOLD - NO TARGET"
+            )
+
+        if now - last_print >= 1.0:
+            print(
+                "[POSITION FOLLOW] "
+                f"locked={target_locked} | "
+                f"N={target['north_m']:+.2f} "
+                f"E={target['east_m']:+.2f} "
+                f"D={target['down_m']:+.2f} "
+                f"Yaw={target['yaw_deg']:.1f}",
+                flush=True,
+            )
+            last_print = now
+
+        await asyncio.sleep(
+            1.0 / POSITION_SETPOINT_HZ
+        )
+
+
 async def follow_control_loop():
+    # --------------------------------------------------------
+    # DRY MODE
+    # Vision continues to run, but nothing is sent to PX4.
+    # --------------------------------------------------------
     if not FOLLOW_REAL:
-        print("[DRY] FOLLOW_REAL is not 1; vision runs, Pixhawk commands are not sent.")
+        print(
+            "[DRY] FOLLOW_REAL is not 1; "
+            "vision runs, Pixhawk commands are not sent.",
+            flush=True,
+        )
+
+        with command_lock:
+            latest_follow_command["control_mode"] = (
+                "DRY / VISION ONLY"
+            )
+
         last_print = 0.0
+
         while True:
             cmd = read_follow_command()
             now = time.monotonic()
+
             if now - last_print >= 1.0:
                 print(
                     "[DRY] "
                     f"locked={cmd['target_locked']} "
-                    f"forward={cmd['forward_m_s']:+.2f} "
-                    f"right={cmd['right_m_s']:+.2f} "
-                    f"down={cmd['down_m_s']:+.2f} "
-                    f"yaw={cmd['yaw_deg_s']:+.1f} "
+                    f"forward_guidance={cmd['forward_m_s']:+.2f} "
+                    f"yaw_guidance={cmd['yaw_deg_s']:+.1f} "
                     f"source={cmd['source']} "
-                    f"age={now - cmd['updated_monotonic']:.2f}s"
+                    f"age={now - cmd['updated_monotonic']:.2f}s",
+                    flush=True,
                 )
                 last_print = now
+
             await asyncio.sleep(0.1)
 
+    # --------------------------------------------------------
+    # REAL POSITION FOLLOW
+    # --------------------------------------------------------
     print("[PX4] importing mavsdk...", flush=True)
+
     from mavsdk import System
-    from mavsdk.offboard import OffboardError, VelocityBodyYawspeed
+    from mavsdk.offboard import OffboardError, PositionNedYaw
+
     print("[PX4] mavsdk imported", flush=True)
 
     drone = System()
-    print("[PX4] System created", flush=True)
 
-    print(f"[PX4] calling connect: {PX4_ADDR}", flush=True)
-    await drone.connect(system_address=PX4_ADDR)
+    print("[PX4] System created", flush=True)
+    print(
+        f"[PX4] calling connect: {PX4_ADDR}",
+        flush=True,
+    )
+
+    await drone.connect(
+        system_address=PX4_ADDR
+    )
+
     print("[PX4] connect returned", flush=True)
 
     await wait_until_connected(drone)
-    
-    # ==================================================
-    # MANUAL OVERRIDE WATCHER
-    # ==================================================
+
+    with command_lock:
+        latest_follow_command["control_mode"] = (
+            "PX4 CONNECTED / WAITING LOCAL POSE"
+        )
+
+    # --------------------------------------------------------
+    # Events
+    # --------------------------------------------------------
     offboard_started_event = asyncio.Event()
     manual_override_event = asyncio.Event()
+    position_error_event = asyncio.Event()
+
+    # --------------------------------------------------------
+    # PX4 state
+    # --------------------------------------------------------
+    px4_state = {
+
+        # Local NED position
+        "north_m": None,
+        "east_m": None,
+        "down_m": None,
+
+        # Yaw
+        "yaw_abs_deg": None,
+    }
 
     manual_override_task = asyncio.create_task(
         watch_manual_override(
@@ -467,206 +670,211 @@ async def follow_control_loop():
             manual_override_event,
         )
     )
-    
-    px4_state = {
-        # Existing altitude
-        "relative_altitude_m": None,
-
-        # Yaw
-        "yaw_abs_deg": None,
-        "yaw_prev_deg": None,
-        "yaw_relative_deg": 0.0,
-        "yaw_rate_actual_deg_s": None,
-
-        # Forward
-        "forward_actual_m_s": None,
-        "forward_relative_m": 0.0,
-        "forward_prev_t": None,
-
-        # Zero is NOT active until Offboard starts
-        "offboard_zeroed": False,
-    }
 
     px4_state_task = asyncio.create_task(
-        watch_px4_state(drone, px4_state)
+        watch_px4_state(
+            drone,
+            px4_state,
+        )
     )
-    
-    
+
+    sender_task = None
+    offboard_active = False
 
     try:
-        initial_alt = await wait_for_altitude_sample(px4_state)
-        if initial_alt is None:
-            print("[ALT] no altitude sample; refusing to enter Offboard altitude hold.")
-            return
-
-        print(
-            f"[ALT] current={initial_alt:.2f}m "
-            f"target={ALT_HOLD_TARGET_M:.2f}m "
-            f"max_vertical={MAX_VERTICAL_CMD:.2f}m/s"
+        # ----------------------------------------------------
+        # POSITION ENTRY
+        #
+        # Sample the aircraft's CURRENT local pose.
+        # That exact pose becomes the first Offboard target.
+        # ----------------------------------------------------
+        current_pose = await wait_for_local_pose(
+            px4_state,
+            timeout_s=5.0,
         )
 
-        print("[PX4] starting Offboard with zero velocity...")
-    
-    
-        await drone.offboard.set_velocity_body(VelocityBodyYawspeed(0.0, 0.0, 0.0, 0.0))
+        if current_pose is None:
+            print(
+                "[POSITION] No valid local N/E/D/Yaw pose. "
+                "Refusing to enter Offboard.",
+                flush=True,
+            )
+
+            with command_lock:
+                latest_follow_command["control_mode"] = (
+                    "POSITION BLOCKED / NO LOCAL POSE"
+                )
+
+            return
+
+        target = {
+            "north_m": current_pose["north_m"],
+            "east_m": current_pose["east_m"],
+            "down_m": current_pose["down_m"],
+            "yaw_deg": current_pose["yaw_deg"],
+            "mode": "POSITION FOLLOW / HOLD",
+        }
+
+        print(
+            "[POSITION] Initial target = current pose | "
+            f"N={target['north_m']:+.2f} "
+            f"E={target['east_m']:+.2f} "
+            f"D={target['down_m']:+.2f} "
+            f"Yaw={target['yaw_deg']:.1f}",
+            flush=True,
+        )
+
+        with command_lock:
+            latest_follow_command["control_mode"] = (
+                "POSITION HOLD / ENTERING OFFBOARD"
+            )
+
+        # First PositionNedYaw setpoint before Offboard start.
+        await drone.offboard.set_position_ned(
+            PositionNedYaw(
+                float(target["north_m"]),
+                float(target["east_m"]),
+                float(target["down_m"]),
+                float(target["yaw_deg"]),
+            )
+        )
+
+        # Keep the same transition behavior that was used
+        # in today's successful Position flight test.
         await asyncio.sleep(0.2)
 
         try:
             await drone.offboard.start()
+
         except OffboardError as exc:
-            print(f"[PX4] Offboard start failed: {exc}")
+            print(
+                f"[PX4] Offboard start failed: {exc}",
+                flush=True,
+            )
+
+            with command_lock:
+                latest_follow_command["control_mode"] = (
+                    "OFFBOARD START FAILED"
+                )
+
             return
 
+        offboard_active = True
         offboard_started_event.set()
-        # ==================================================
-        # OFFBOARD ZERO REFERENCE
-        # ==================================================
 
-        px4_state["yaw_relative_deg"] = 0.0
-        px4_state["yaw_prev_deg"] = px4_state["yaw_abs_deg"]
-
-        px4_state["forward_relative_m"] = 0.0
-        px4_state["forward_prev_t"] = time.monotonic()
-
-        px4_state["offboard_zeroed"] = True
 
         print(
-            "[PX4 ZERO] "
-            "Yaw Relative = 0.0 deg | "
-            "Forward Relative = 0.0 m"
+            "[PX4] OFFBOARD POSITION active.",
+            flush=True,
         )
 
-        
-        print("[PX4] Offboard active. Commands are sent directly to PX4.")
-        last_alt_print = 0.0
-        while True:
-            cmd = read_follow_command()
-            now = time.monotonic()
-            age = now - cmd["updated_monotonic"]
-            current_alt = px4_state.get("relative_altitude_m")
-            down_cmd = compute_altitude_hold_down_cmd(current_alt)
-            alt_error = None if current_alt is None else current_alt - ALT_HOLD_TARGET_M
+        print(
+            "[PX4] Current D is now the fixed "
+            "Position Follow height target.",
+            flush=True,
+        )
 
+        # ----------------------------------------------------
+        # Dedicated 10 Hz PositionNedYaw sender
+        # ----------------------------------------------------
+        sender_task = asyncio.create_task(
+            position_setpoint_sender(
+                drone,
+                target,
+                px4_state,
+                manual_override_event,
+                position_error_event,
+            )
+        )
 
-            if age > 0.5 or not cmd["target_locked"]:
-                control_mode = "OFFBOARD / ALT HOLD / NO TARGET"
-            else:
-                control_mode = "OFFBOARD / FOLLOW + ALT HOLD"
+        # ----------------------------------------------------
+        # POSITION FOLLOW
+        #
+        # No valid target:
+        #     hold last N/E/D/Yaw position target.
+        #
+        # Valid target:
+        #     forward guidance -> moving N/E target
+        #     yaw guidance     -> moving Yaw target
+        #
+        # D remains fixed.
+        # ----------------------------------------------------
+        await position_follow_loop(
+            target,
+            px4_state,
+            manual_override_event,
+            position_error_event,
+        )
 
-            with lock:
-                latest_follow_command["px4_alt_now_m"] = (
-                    None if current_alt is None else float(current_alt)
-                )
-                latest_follow_command["alt_target_m"] = float(ALT_HOLD_TARGET_M)
-                latest_follow_command["framing_target_px"] = None
-                latest_follow_command["alt_error_m"] = (
-                    None if alt_error is None else float(alt_error)
-                )
-                latest_follow_command["vertical_down_cmd_m_s"] = float(down_cmd)
-                latest_follow_command["control_mode"] = control_mode
-                latest_follow_command["px4_yaw_relative_deg"] = (
-                    float(px4_state["yaw_relative_deg"])
-                    if px4_state["offboard_zeroed"]
-                    else None
-                )
-
-                latest_follow_command["px4_yaw_rate_actual_deg_s"] = (
-                    None
-                    if px4_state["yaw_rate_actual_deg_s"] is None
-                    else float(px4_state["yaw_rate_actual_deg_s"])
-                )
-
-                latest_follow_command["px4_forward_actual_m_s"] = (
-                    None
-                    if px4_state["forward_actual_m_s"] is None
-                    else float(px4_state["forward_actual_m_s"])
-                )
-
-                latest_follow_command["px4_forward_relative_m"] = (
-                    float(px4_state["forward_relative_m"])
-                    if px4_state["offboard_zeroed"]
-                    else None
-                )
-                
-                
-            append_flight_log({
-                "timestamp": datetime.now().isoformat(timespec="milliseconds"),
-                "monotonic": f"{now:.3f}",
-                "mode": "REAL",
-                "locked": cmd["target_locked"],
-                "forward_m_s": f"{cmd['forward_m_s']:.3f}",
-                "right_m_s": f"{cmd['right_m_s']:.3f}",
-                "down_m_s": f"{cmd['down_m_s']:.3f}",
-                "yaw_deg_s": f"{cmd['yaw_deg_s']:.3f}",
-                "altitude_m": "" if current_alt is None else f"{current_alt:.3f}",
-                "alt_error_m": "" if alt_error is None else f"{alt_error:.3f}",
-                "alt_down_cmd_m_s": f"{down_cmd:.3f}",
-                "source": cmd["source"],
-            })
-            if current_alt is not None and now - last_alt_print >= 1.0:
-                print(
-                    f"[ALT] target={ALT_HOLD_TARGET_M:.2f}m "
-                    f"current={current_alt:.2f}m "
-                    f"down_cmd={down_cmd:+.2f}m/s"
-                )
-                last_alt_print = now
-            
-            if manual_override_event.is_set():
-                print(
-                    "[PX4] Manual override active. Stopping command loop.",
-                    flush=True,
-                )
-                break
-
-            if age > 0.5 or not cmd["target_locked"]:
-                await drone.offboard.set_velocity_body(
-                    VelocityBodyYawspeed(
-                        0.0,
-                        0.0,
-                        down_cmd,
-                        0.0,
-                    )
-                )
-            else:
-                await drone.offboard.set_velocity_body(
-                    VelocityBodyYawspeed(
-                        cmd["forward_m_s"],
-                        cmd["right_m_s"],
-                        down_cmd,
-                        cmd["yaw_deg_s"],
-                    )
-                )
-
-            await asyncio.sleep(1.0 / FOLLOW_COMMAND_HZ)
-            
+        if position_error_event.is_set():
+            print(
+                "[POSITION] Follow stopped because "
+                "Position setpoint transmission failed.",
+                flush=True,
+            )
 
     finally:
+        # ----------------------------------------------------
+        # Stop sender first so cleanup cannot emit another
+        # Position setpoint after manual override.
+        # ----------------------------------------------------
+        if sender_task is not None:
+            sender_task.cancel()
+
+            try:
+                await sender_task
+            except asyncio.CancelledError:
+                pass
+
+        # ----------------------------------------------------
+        # RC/manual override has priority.
+        # Do not send another Offboard command after it.
+        # ----------------------------------------------------
         if manual_override_event.is_set():
             print(
-                "[PX4] cleanup: manual override detected; "
+                "[PX4] cleanup: Manual Override detected; "
                 "no further Offboard command will be sent.",
                 flush=True,
             )
-        else:
-            print("[PX4] cleanup: stopping Offboard.", flush=True)
+
+            manual_override_task.cancel()
+
             try:
-                await drone.offboard.stop()
-            except Exception as exc:
-                print(f"[PX4] Offboard stop warning: {exc}", flush=True)
-            
+                await manual_override_task
+            except asyncio.CancelledError:
+                pass
+
+        else:
+            # Cancel watcher BEFORE our own offboard.stop()
+            # so our intentional stop is not classified as
+            # an RC manual override.
+            manual_override_task.cancel()
+
+            try:
+                await manual_override_task
+            except asyncio.CancelledError:
+                pass
+
+            if offboard_active:
+                print(
+                    "[PX4] cleanup: stopping Offboard.",
+                    flush=True,
+                )
+
+                try:
+                    await drone.offboard.stop()
+                except Exception as exc:
+                    print(
+                        f"[PX4] Offboard stop warning: {exc}",
+                        flush=True,
+                    )
+
         px4_state_task.cancel()
+
         try:
             await px4_state_task
         except asyncio.CancelledError:
             pass
-
-        manual_override_task.cancel()
-        try:
-            await manual_override_task
-        except asyncio.CancelledError:
-            pass   
-
-        
 
 def run_follow_control_loop():
     print("[PX4] thread started", flush=True)
@@ -679,7 +887,7 @@ def run_follow_control_loop():
 # Camera Loop
 # =========================
 def camera_loop():
-    global latest_jpeg, latest_frame, current_person_boxes, selected_click, selected_target, target_lost_count
+    global latest_frame, selected_click, selected_target, target_lost_count
 
     lost_count = 0
     frame_count = 0
@@ -690,8 +898,6 @@ def camera_loop():
         start_pipeline()
     except Exception as e:
         logger.error(f"Initial pipeline start failed: {e}")
-        with lock:
-            latest_jpeg = generate_placeholder_jpeg("Camera start failed")
         return
 
     while True:
@@ -700,8 +906,6 @@ def camera_loop():
                 logger.warning("Pipeline is None, attempting restart")
                 recovered = restart_pipeline()
                 if not recovered:
-                    with lock:
-                        latest_jpeg = generate_placeholder_jpeg("Camera reconnect failed")
                     time.sleep(1)
                     continue
                 lost_count = 0
@@ -728,11 +932,6 @@ def camera_loop():
                     recovered = restart_pipeline()
                     if recovered:
                         lost_count = 0
-                        with lock:
-                            latest_jpeg = generate_placeholder_jpeg("Camera recovered")
-                    else:
-                        with lock:
-                            latest_jpeg = generate_placeholder_jpeg("Camera reconnect failed")
                         time.sleep(1)
                     continue
 
@@ -806,10 +1005,8 @@ def camera_loop():
                         flush=True,
                     )
 
-            with lock:
-                current_person_boxes = [dict(b) for b in person_boxes]
 
-            with lock:
+            with vision_lock:
                 click = dict(selected_click) if selected_click is not None else None
 
             # ===== click-select target =====
@@ -820,13 +1017,13 @@ def camera_loop():
                 ]
                 if len(hit_boxes) > 0:
                     locked_target = min(hit_boxes, key=lambda b: b["area"])
-                    with lock:
+                    with vision_lock:
                         selected_target = dict(locked_target)
                         selected_click = None
                         
             # keep selected target across frames
             if locked_target is None:
-                with lock:
+                with vision_lock:
                     prev_target = dict(selected_target) if selected_target is not None else None
 
                 if prev_target is not None and len(person_boxes) > 0:
@@ -842,7 +1039,7 @@ def camera_loop():
                     # accept only if still close enough to previous target
                     if dist2 < 150 * 150:
                         locked_target = candidate
-                        with lock:
+                        with vision_lock:
 
                             selected_target = dict(locked_target)
                         target_lost_count = 0
@@ -853,7 +1050,7 @@ def camera_loop():
                     target_lost_count += 1
 
                 if target_lost_count >= MAX_TARGET_LOST:
-                    with lock:
+                    with vision_lock:
                         selected_target = None
                     target_lost_count = 0
 
@@ -927,8 +1124,6 @@ def camera_loop():
                 target_locked = locked_target is not None
                 update_follow_command(
                     forward_m_s=float(forward_cmd if target_locked else 0.0),
-                    right_m_s=0.0,
-                    down_m_s=0.0,
                     yaw_deg_s=float(yaw_cmd if target_locked else 0.0),
                     target_locked=target_locked,
                     source="pi-vision-11",
@@ -945,8 +1140,6 @@ def camera_loop():
             if locked_target is None:
                 update_follow_command(
                     forward_m_s=0.0,
-                    right_m_s=0.0,
-                    down_m_s=0.0,
                     yaw_deg_s=0.0,
                     target_locked=False,
                     source="no-target",
@@ -978,55 +1171,46 @@ def camera_loop():
                     f"yaw_cmd {yaw_cmd:.3f}, infer {infer_ms:.1f} ms"
                 )
 
-            cv2.putText(color_image, f"FPS {fps_est:.1f}", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 2)
-            cv2.putText(color_image, f"Detections {det_count}", (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 2)
-            cv2.putText(color_image, f"Infer {infer_ms:.1f} ms", (10, 90), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 2)
-            cv2.putText(color_image, f"Persons {len(person_boxes)}", (10, 120), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 2)
-            cv2.putText(color_image, f"Locked {'YES' if locked_target is not None else 'NO'}", (10, 150), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 2)
-            cv2.putText(color_image, f"error_x {error_x:.1f}", (10, 180), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 2)
-            cv2.putText(color_image, f"err_norm {err_norm:.3f}", (10, 210), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 2)
-            cv2.putText(color_image, f"yaw_cmd {yaw_cmd:.3f}", (10, 240), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 255), 2)
-
-            cv2.putText(
-                color_image,
-                f"dist {target_dist:.2f}m" if target_dist is not None else "dist N/A",
-                (10, 270),
-                cv2.FONT_HERSHEY_SIMPLEX,
-                0.8,
-                (0, 255, 255),
-                2,
+            # Minimal flight-video overlay.
+            overlay_state = (
+                "LOCKED"
+                if locked_target is not None
+                else "SEARCHING"
             )
 
             cv2.putText(
                 color_image,
-                f"dist_err {dist_error:.2f}",
-                (10, 300),
+                overlay_state,
+                (12, 30),
                 cv2.FONT_HERSHEY_SIMPLEX,
-                0.8,
-                (0, 255, 255),
+                0.75,
+                (255, 255, 255),
                 2,
             )
 
+            if target_dist is not None:
+                cv2.putText(
+                    color_image,
+                    f"DIST {target_dist:.2f} m",
+                    (12, 60),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    0.75,
+                    (255, 255, 255),
+                    2,
+                )
             cv2.putText(
                 color_image,
-                f"forward_cmd {forward_cmd:.3f}",
-                (10, 330),
+                f"FWD {forward_cmd:+.2f} m/s",
+                (12, 90),
                 cv2.FONT_HERSHEY_SIMPLEX,
-                0.8,
-                (0, 255, 255),
+                0.75,
+                (255, 255, 255),
                 2,
             )
-            
-            with lock:
+            with vision_lock:
                 latest_frame = color_image.copy()
-
-            ok, jpg = cv2.imencode(".jpg", color_image, [int(cv2.IMWRITE_JPEG_QUALITY), 60])
-            if not ok:
-                logger.warning("JPEG encode failed")
-                continue
-
-            with lock:
-                latest_jpeg = jpg.tobytes()
+ 
+            
 
         except Exception as e:
             logger.error(f"Main loop unexpected error: {e}")
@@ -1040,7 +1224,7 @@ class LatestFrameVideoTrack(VideoStreamTrack):
         pts, time_base = await self.next_timestamp()
 
         while True:
-            with lock:
+            with vision_lock:
                 frame = None if latest_frame is None else latest_frame.copy()
 
             if frame is not None:
@@ -1069,100 +1253,64 @@ WEBRTC_HTML = """
            style="width:100%;background:#000;cursor:crosshair;"></video>
 
     <div id="status"
-         style="margin-top:10px;color:#b7c0c7;">
+         style="margin-top:10px;color:#888;font-size:14px;">
         Connecting...
     </div>
 
-    <!-- PX4 altitude debug panel -->
     <div style="
-        margin-top:14px;
-        background:#1d1d1d;
-        border:1px solid #444;
+        margin-top:12px;
+        background:#181818;
+        border:1px solid #333;
         border-radius:8px;
         padding:12px 14px;
-        font-size:16px;
-        line-height:1.6;
+        line-height:1.55;
+        color:#d5d5d5;
     ">
-        <div style="font-weight:bold;margin-bottom:6px;">
-            PX4 ACTUAL STATE
+        <div style="
+            font-size:15px;
+            font-weight:700;
+            letter-spacing:0.08em;
+            margin-bottom:8px;
+        ">
+            POSITION FOLLOW
         </div>
 
         <div>
-            PX4 Alt Now:
-            <span id="px4AltNow">N/A</span>
-        </div>
-
-        <div>
-            Alt Target:
-            <span id="altTarget">N/A</span>
-        </div>
-
-        <div>
-            Framing Target:
-            <span id="framingTarget">N/A</span>
-        </div>
-
-        <div>
-            Alt Error:
-            <span id="altError">N/A</span>
-        </div>
-
-        <div>
-            Vertical Cmd / Down Cmd:
-            <span id="verticalCmd">+0.00 m/s — HOLD</span>
-        </div>
-
-        <div>
-            Control Mode:
+            Control:
             <span id="controlMode">UNKNOWN</span>
         </div>
-        <div style="margin-top:10px;font-weight:bold;">
-            YAW
+
+        <div>
+            Architecture:
+            PositionNedYaw
         </div>
 
         <div>
-            Yaw CMD:
-            <span id="yawCmd">+0.0 deg/s</span>
+            Height:
+            Hold D from Follow entry
         </div>
 
         <div>
-            Yaw Actual Rate:
-            <span id="yawActualRate">N/A</span>
+            Position Leash:
+            0.50 m
         </div>
 
         <div>
-            Yaw Relative:
-            <span id="yawRelative">N/A</span>
+            Yaw Leash:
+            &plusmn;30&deg;
         </div>
 
-        <div style="margin-top:10px;font-weight:bold;">
-            FORWARD
-        </div>
-
-        <div>
-            Forward CMD:
-            <span id="forwardCmd">+0.00 m/s</span>
-        </div>
-
-        <div>
-            Forward Actual:
-            <span id="forwardActual">N/A</span>
-        </div>
-
-        <div>
-            Forward Relative:
-            <span id="forwardRelative">N/A</span>
+        <div style="margin-top:6px;color:#999;">
+            No valid target &rarr; hold last N/E/D/Yaw target
         </div>
     </div>
-</section>
+  </section>
 
         <aside style="background:#1d1d1d;border:1px solid #444;border-radius:8px;padding:14px;font-size:18px;line-height:1.55;">
             <div>Mode: <span id="mode">DRY</span></div>
             <div>Locked: <span id="locked" style="color:#ff5555;">False</span></div>
-            <div>Forward: <span id="forward" style="color:#ffd84d;">+0.00</span> m/s</div>
-            <div>Right: <span id="right" style="color:#ffd84d;">+0.00</span> m/s</div>
-            <div>Down: <span id="down" style="color:#ffd84d;">+0.00</span> m/s</div>
-            <div>Yaw: <span id="yaw" style="color:#ffd84d;">+0.0</span> deg/s</div>
+            <div>Forward Guidance: <span id="forward" style="color:#ffd84d;">+0.00</span> m/s</div>
+            <div>Yaw Guidance: <span id="yaw" style="color:#ffd84d;">+0.0</span> deg/s</div>
             <div>Source: <span id="source">no-target</span></div>
             <div>Age: <span id="age">0.00</span>s</div>
         </aside>
@@ -1184,91 +1332,10 @@ WEBRTC_HTML = """
             locked.style.color = s.locked ? "#39ff88" : "#ff5555";
 
             document.getElementById("forward").textContent = signed(s.forward, 2);
-            document.getElementById("right").textContent = signed(s.right, 2);
-            document.getElementById("down").textContent = signed(s.down, 2);
             document.getElementById("yaw").textContent = signed(s.yaw, 1);
             document.getElementById("source").textContent = s.source;
             document.getElementById("age").textContent = Number(s.age).toFixed(2);
-            
-            // =========================
-            // PX4 YAW ACTUAL STATE
-            // =========================
 
-            document.getElementById("yawCmd").textContent =
-                signed(s.yaw, 1) + " deg/s";
-
-            document.getElementById("yawActualRate").textContent =
-                s.px4_yaw_rate_actual == null
-                    ? "N/A"
-                    : signed(s.px4_yaw_rate_actual, 1) + " deg/s";
-
-            document.getElementById("yawRelative").textContent =
-                s.px4_yaw_relative == null
-                    ? "N/A"
-                    : signed(s.px4_yaw_relative, 1) + "°";
-
-
-            // =========================
-            // PX4 FORWARD ACTUAL STATE
-            // =========================
-
-            document.getElementById("forwardCmd").textContent =
-                signed(s.forward, 2) + " m/s";
-
-            document.getElementById("forwardActual").textContent =
-                s.px4_forward_actual == null
-                    ? "N/A"
-                    : signed(s.px4_forward_actual, 2) + " m/s";
-
-            document.getElementById("forwardRelative").textContent =
-                s.px4_forward_relative == null
-                    ? "N/A"
-                    : signed(s.px4_forward_relative, 2) + " m";
-            // PX4 altitude now
-            document.getElementById("px4AltNow").textContent =
-                s.px4_alt_now == null
-                    ? "N/A"
-                    : Number(s.px4_alt_now).toFixed(2) + " m";
-
-
-            // Altitude target
-            document.getElementById("altTarget").textContent =
-                s.alt_target == null
-                    ? "N/A"
-                    : Number(s.alt_target).toFixed(2) + " m";
-
-
-            // Framing target
-            document.getElementById("framingTarget").textContent =
-                s.framing_target == null
-                    ? "N/A"
-                    : Number(s.framing_target).toFixed(0) + " px";
-
-
-            // Altitude error
-            document.getElementById("altError").textContent =
-                s.alt_error == null
-                    ? "N/A"
-                    : signed(s.alt_error, 2) + " m";
-
-
-            // Actual vertical command sent toward PX4
-            const vertical = Number(s.vertical_down_cmd);
-
-            let verticalAction = "— HOLD";
-
-            if (vertical > 0.01) {
-                verticalAction = "↓ DESCEND";
-            }
-            else if (vertical < -0.01) {
-                verticalAction = "↑ CLIMB";
-            }
-
-            document.getElementById("verticalCmd").textContent =
-                signed(vertical, 2) + " m/s " + verticalAction;
-
-
-            // Current control mode
             document.getElementById("controlMode").textContent =
                 s.control_mode || "UNKNOWN";
         } catch (e) {}
@@ -1365,7 +1432,7 @@ async def webrtc_select_target(request):
     x = float(data["x"])
     y = float(data["y"])
 
-    with lock:
+    with vision_lock:
         selected_click = {"x": x, "y": y}
 
     return web.json_response({"ok": True, "x": x, "y": y})
@@ -1377,23 +1444,13 @@ async def webrtc_status(request):
     return web.json_response({
         "locked": cmd["target_locked"],
         "forward": cmd["forward_m_s"],
-        "right": cmd["right_m_s"],
-        "down": cmd["down_m_s"],
         "yaw": cmd["yaw_deg_s"],
         "source": cmd["source"],
         "age": age,
         
         # PX4 altitude / vertical debug status
-        "px4_alt_now": cmd["px4_alt_now_m"],
-        "px4_yaw_relative": cmd["px4_yaw_relative_deg"],
-        "px4_yaw_rate_actual": cmd["px4_yaw_rate_actual_deg_s"],
-        "px4_forward_actual": cmd["px4_forward_actual_m_s"],
-        "px4_forward_relative": cmd["px4_forward_relative_m"],
-        "alt_target": cmd["alt_target_m"],
-        "framing_target": cmd["framing_target_px"],
-        "alt_error": cmd["alt_error_m"],
-        "vertical_down_cmd": cmd["vertical_down_cmd_m_s"],
         "control_mode": cmd["control_mode"],
+        "follow_real": FOLLOW_REAL,
     })
 
 
@@ -1418,107 +1475,6 @@ def run_webrtc_server():
 
     loop.run_forever()
 
-
-# =========================
-# MJPEG Generator
-# =========================
-def mjpeg_generator():
-    logger.info("MJPEG stream client connected")
-    while True:
-        with lock:
-            frame = latest_jpeg
-
-        if frame is None:
-            frame = generate_placeholder_jpeg("Waiting for camera...")
-            time.sleep(0.1)
-
-        yield (
-            b"--frame\r\n"
-            b"Content-Type: image/jpeg\r\n\r\n" + frame + b"\r\n"
-        )
-
-        time.sleep(0.001)
-
-
-# =========================
-# Flask Routes
-# =========================
-@app.route("/")
-def index():
-    return """
-    <html>
-      <head>
-        <title>RealSense YOLO MJPEG Stream</title>
-      </head>
-      <body>
-        <h2>RealSense YOLO MJPEG Stream</h2>
-        <p>Click on a person in the image to select target.</p>
-
-        <img id="video" src="/stream" width="640" style="cursor: crosshair; border: 1px solid #ccc;">
-
-        <p id="status">No target selected</p>
-
-        <script>
-          const img = document.getElementById("video");
-          const status = document.getElementById("status");
-
-          img.addEventListener("click", function(event) {
-            const rect = img.getBoundingClientRect();
-
-            const scaleX = 640 / rect.width;
-            const scaleY = 480 / rect.height;
-
-            const x = (event.clientX - rect.left) * scaleX;
-            const y = (event.clientY - rect.top) * scaleY;
-
-            fetch("/select_target", {
-              method: "POST",
-              headers: {
-                "Content-Type": "application/json"
-              },
-              body: JSON.stringify({ x: x, y: y })
-            })
-            .then(response => response.json())
-            .then(data => {
-              if (data.ok) {
-                status.textContent = `Selected click: (${Math.round(x)}, ${Math.round(y)})`;
-              } else {
-                status.textContent = "Selection failed";
-              }
-            })
-            .catch(err => {
-              status.textContent = "Request error";
-            });
-          });
-        </script>
-      </body>
-    </html>
-    """
-
-
-@app.route("/select_target", methods=["POST"])
-def select_target():
-    global selected_click
-
-    data = request.get_json(silent=True) or {}
-    x = data.get("x")
-    y = data.get("y")
-
-    if x is None or y is None:
-        return jsonify({"ok": False, "error": "missing x or y"}), 400
-
-    with lock:
-        selected_click = {"x": float(x), "y": float(y)}
-
-    return jsonify({"ok": True, "x": x, "y": y})
-
-
-@app.route("/stream")
-def stream():
-    return Response(
-        mjpeg_generator(),
-        mimetype="multipart/x-mixed-replace; boundary=frame"
-    )
 
 
 # =========================
