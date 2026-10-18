@@ -217,26 +217,6 @@ def get_target_distance(depth_frame, cx, cy, box, win=5):
 
     return float(np.median(samples))
 
-def get_realsense_agl(depth_frame, pitch_deg, camera_tilt_deg=30.0):
-    intrin = depth_frame.profile.as_video_stream_profile().intrinsics
-    w = intrin.width
-    h = intrin.height
-    heights = []
-    tilt_rad = math.radians(camera_tilt_deg)
-    pitch_rad = math.radians(float(pitch_deg))
-    for py in range(int(h * 0.68), int(h * 0.88), 12):
-        for px in range(int(w * 0.40), int(w * 0.60), 12):
-            d = depth_frame.get_distance(px, py)
-            if d <= 0.15 or d >= DEPTH_MAX_M: continue
-            point = rs.rs2_deproject_pixel_to_point(intrin, [float(px), float(py)], float(d))
-            cam_y = float(point[1])
-            cam_z = float(point[2])
-            body_forward_m = cam_z * math.cos(tilt_rad) - cam_y * math.sin(tilt_rad)
-            body_down_m = cam_z * math.sin(tilt_rad) + cam_y * math.cos(tilt_rad)
-            camera_agl_m = -body_forward_m * math.sin(pitch_rad) + body_down_m * math.cos(pitch_rad)
-            if 0.05 < camera_agl_m < 10.0: heights.append(camera_agl_m)
-    return float(np.median(heights)) if len(heights) >= 5 else None
-
 def update_follow_command(
     forward_m_s,
     yaw_deg_s,
@@ -950,8 +930,6 @@ def camera_loop():
     frame_count = 0
     fps_est = 0.0
     last_t = time.time()
-    realsense_agl_m = None
-    last_agl_update = 0.0
     prev_forward_distance_m = None
     prev_distance_rate_time = None
     filtered_distance_rate_m_s = 0.0
@@ -981,8 +959,6 @@ def camera_loop():
 
                 color_frame = aligned_frames.get_color_frame()
                 depth_frame = aligned_frames.get_depth_frame()
-                now_agl = time.monotonic()
-                if now_agl - last_agl_update >= 0.2: realsense_agl_m = get_realsense_agl(depth_frame, latest_pitch_deg, CAMERA_TILT_DEG); last_agl_update = now_agl
 
                 if not color_frame or not depth_frame:
                     raise RuntimeError("No color frame")
@@ -1313,7 +1289,6 @@ def camera_loop():
 
             if target_dist is not None: cv2.putText(color_image, f"RAW {target_dist:.2f} m", (12, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.65, (255, 255, 255), 2)
             if forward_distance_m is not None: cv2.putText(color_image, f"HORIZ {forward_distance_m:.2f} m", (12, 90), cv2.FONT_HERSHEY_SIMPLEX, 0.65, (0, 255, 255), 2)
-            if realsense_agl_m is not None: cv2.putText(color_image, f"RS AGL {realsense_agl_m:.2f} m", (12, 180), cv2.FONT_HERSHEY_SIMPLEX, 0.65, (0, 255, 0), 2)
             cv2.putText(color_image, f"PITCH {latest_pitch_deg:+.1f} deg", (12, 120), cv2.FONT_HERSHEY_SIMPLEX, 0.65, (255, 255, 255), 2)
             cv2.putText(color_image, f"FWD {forward_cmd:+.2f} m/s", (12, 150), cv2.FONT_HERSHEY_SIMPLEX, 0.65, (255, 255, 255), 2)
             if bbox_h_pct is not None: cv2.putText(color_image, f"BBOX H {bbox_h_pct:.0f}%  Y {bbox_cy_pct:.0f}%", (12, 210), cv2.FONT_HERSHEY_SIMPLEX, 0.65, (0, 255, 255), 2)
@@ -1405,7 +1380,7 @@ WEBRTC_HTML = """
 
         <div>
             Position Leash:
-            0.50 m
+            1.00 m
         </div>
 
         <div>
