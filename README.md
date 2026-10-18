@@ -1,28 +1,21 @@
 # Depth-Aware Person-Following Drone
 
-A vision-based person-following quadrotor built with PX4, Raspberry Pi 5, Intel RealSense D435i, YOLO11n, and MAVSDK Offboard control.
+A vision-based person-following quadrotor built with PX4, Raspberry Pi 5, Intel RealSense D435i, Hailo-10H person detection, and MAVSDK Offboard control.
 
-The system detects people, allows an operator to select a target through a web interface, estimates the target distance using depth data, and generates bounded velocity and yaw commands for the flight controller.
+The system detects people, allows an operator to select a target through a web interface, estimates target distance using RealSense depth, and converts bounded visual guidance into local-NED position/yaw setpoints.
 
 ## Project Status
 
 **Version:** v1.0 baseline  
 **Status:** Field-tested working prototype
 
-The current system can:
+## Project Status
 
-- Detect people using YOLO11n
-- Select a target by clicking the web video feed
-- Track the selected target between consecutive frames
-- Estimate target distance using RealSense depth data
-- Maintain a target following distance
-- Rotate the aircraft to keep the target near the image center
-- Maintain approximately 1.5 m relative altitude
-- Stop horizontal and yaw tracking when the target is lost
-- Continue altitude hold after target loss
-- Use a safety supervision layer for real PX4 commands
-- Record flight telemetry and control commands in CSV logs
-- Stream annotated video through WebRTC
+**Status:** Working prototype; verify vehicle configuration and complete staged checks before real flight.
+
+The current main program runs Hailo-10H person detection, operator target selection, RealSense depth estimation, PX4 NED position feedback, and `PositionNedYaw` setpoints. On follow entry it captures current position/yaw; without valid visual guidance it holds the last complete N/E/D/yaw target. The Down (altitude) target remains at its captured value.
+
+The LiDAR is reported as installed, but its model/interface are not recorded and the current main program does not read its data. Do not rely on it for obstacle avoidance or flight control.
 
 ## System Architecture
 
@@ -55,62 +48,34 @@ Holybro X500 V2 Quadcopter
 - PX4 flight-control software
 - Raspberry Pi 5 companion computer
 - Intel RealSense D435i depth camera
+- LiDAR (reported installed; model/interface and role to be recorded)
 - Holybro M10 GPS
 - 4S LiPo battery
 - Serial connection from Raspberry Pi to Pixhawk TELEM2
 
-Current hardware and environment information is stored in [`docs/reference/`](docs/reference/).
+Current hardware and environment information is stored in [`docs/reference/`](docs/reference/); see [`docs/reference/lidar_reference.md`](docs/reference/lidar_reference.md) for LiDAR status.
 
 ## Main Software
 
 ~~~text
 src/
-├── follow_drone.py
-└── safety_supervisor_v2.py
+├── follow_drone.py             Main vision and position-follow runtime
+└── hailo_person_detector.py    Hailo-10H detector
 ~~~
 
 ### `follow_drone.py`
 
-The main runtime application provides:
-
-- RealSense color and depth capture
-- YOLO11n person detection
-- Web-based target selection
-- Target continuity between frames
-- Depth-based following-distance control
-- Image-based yaw alignment
-- Fixed-altitude control
-- WebRTC video streaming
-- PX4 Offboard command output
-- Flight CSV logging
-
-### `safety_supervisor_v2.py`
-
-The safety supervision layer supports:
-
-- Command monitoring
-- Velocity and acceleration limits
-- Roll and pitch monitoring
-- Offboard failsafe behavior
-- Zero-command cleanup during shutdown
+`src/follow_drone.py` contains the follow controller and its prestream, telemetry, and manual-override handling; there is no separate `safety_supervisor_v2.py` module in this repository. This documentation update does not modify the main program.
 
 ## Repository Structure
 
 ~~~text
-archive/
-├── development_log/   Historical engineering notes
-└── experiments/       Early prototypes and failed approaches
-
-docs/
-├── field_ops/         Field-test checklist
-├── reference/         Current hardware and software references
-└── testing/           SITL and closed-loop test documentation
-
-models/                Legacy object-detection models
-src/                   Current runtime software
-tests/hardware/        Hardware flight-test utilities
-yolo11n.pt              YOLO11n weights managed with Git LFS
-~~~
+archive/                 Historical notes, prototypes, and validation material
+docs/field_ops/          Field-test checklist
+docs/reference/          Current hardware and software references
+models/                  Model assets
+src/                     Runtime software
+tests/hardware/          Hardware flight-test utilities
 
 ## Running the Software
 
@@ -125,13 +90,13 @@ FOLLOW_REAL=0 python3 src/follow_drone.py
 ### Real PX4 Control
 
 ~~~bash
-FOLLOW_REAL=1 FOLLOW_ALT_M=1.5 python3 src/follow_drone.py
+FOLLOW_REAL=1 python3 src/follow_drone.py
 ~~~
 
 The default PX4 serial connection is:
 
 ~~~text
-serial:///dev/serial0:57600
+serial:///dev/serial0:921600 (code default; verify actual TELEM2 baud before real control)
 ~~~
 
 The WebRTC monitoring and target-selection interface is available at:
@@ -144,14 +109,16 @@ http://<raspberry-pi-ip>:8080
 
 | Parameter | Baseline value |
 | --- | ---: |
-| Target following distance | 4.0 m |
+| Setting | Current main-program value |
+| --- | ---: |
+| Target following distance | 2.0 m |
 | Distance deadband | ±0.30 m |
-| Target altitude | 1.5 m |
-| Altitude deadband | ±0.10 m |
-| Maximum forward speed | 0.8 m/s |
-| Maximum vertical speed | 0.2 m/s |
-| Maximum yaw rate | 30 deg/s |
-| Command frequency | 10 Hz |
+| Maximum forward visual guidance | 0.8 m/s (converted to bounded position guidance) |
+| Maximum yaw visual guidance | ±30 deg/s (converted to bounded yaw guidance) |
+| Position setpoint rate | 10 Hz |
+| Horizontal position leash | 1.00 m |
+| Yaw leash | ±30° |
+| Down/altitude target | Hold captured NED Down target |
 
 ## Safety Notes
 
@@ -173,17 +140,16 @@ Before real flight:
 
 The current v1.0 system does not include:
 
-- Obstacle avoidance
+- LiDAR integration and obstacle avoidance
 - Persistent person re-identification
 - Reliable multi-person identity tracking
-- Horizontal position hold
 - Global path planning
 - Automatic takeoff or landing in the main follow program
 - Authentication for the WebRTC interface
 
 Target continuity is based mainly on the proximity of detection boxes between consecutive frames. The tracker may switch targets when multiple people cross or move close together.
 
-The altitude controller maintains a fixed relative-altitude target rather than recording the altitude automatically when Offboard mode begins.
+The current controller holds the Down target captured on follow entry; it does not provide LiDAR ranging or obstacle avoidance.
 
 ## Development History
 

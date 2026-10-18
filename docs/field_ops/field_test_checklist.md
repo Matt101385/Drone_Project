@@ -1,6 +1,6 @@
 # Field Test Checklist
 
-This checklist is for the Raspberry Pi 5 + Hailo-10H + Pixhawk 6X + Intel RealSense D435i person-following drone.
+This checklist is for the Raspberry Pi 5 + Hailo-10H + Pixhawk 6X + Intel RealSense D435i person-following drone. A LiDAR is reported installed; see [its reference](../reference/lidar_reference.md). The current main program does not read LiDAR data.
 
 ## Operating Modes
 
@@ -43,7 +43,6 @@ Main files:
 ```text
 src/follow_drone.py
 src/hailo_person_detector.py
-src/safety_supervisor_v2.py
 tests/hardware/takeoff_hover_land_test.py
 docs/field_ops/field_test_checklist.md
 ```
@@ -57,12 +56,14 @@ Do not run numbered development filenames such as `11_follow_safe.py` or `13_tak
 * Props are undamaged and mounted in the correct direction.
 * Frame, arms, camera mount, Raspberry Pi mount, AI HAT, and Pixhawk mount are tight.
 * Intel RealSense D435i is connected and firmly mounted.
+* LiDAR (if installed) is securely mounted and powered; identify its model/interface. Do not rely on it for avoidance/control: it is not integrated.
 * Hailo-10H AI HAT and its heatsink are firmly installed.
 * Raspberry Pi active cooling is operating.
 * Raspberry Pi, AI HAT, and RealSense use a suitable regulated power supply.
 * The Raspberry Pi is not powered through the Pixhawk TELEM2 port.
 * Pixhawk serial cable is connected to the Raspberry Pi.
 * RC transmitter is powered on and bound.
+* Verify actual TELEM2 baud: main-program default is 921600, while hover test/reference say 57600. Confirm the configured connection before proceeding.
 * QGroundControl can see the vehicle.
 * Position, GPS, home-position, and battery checks are healthy.
 * Test area is open, flat, and far from people and obstacles.
@@ -74,7 +75,8 @@ Confirm the project is current:
 
 ```bash
 cd ~/Drone_Project
-git pull origin main
+git status --short  # preserve/resolve local changes before syncing
+git pull --ff-only origin main
 source .venv/bin/activate
 ```
 
@@ -90,7 +92,6 @@ Confirm the main files are present:
 ls -1 \
   src/follow_drone.py \
   src/hailo_person_detector.py \
-  src/safety_supervisor_v2.py \
   tests/hardware/takeoff_hover_land_test.py
 ```
 
@@ -100,7 +101,6 @@ Check Python syntax:
 python -m py_compile \
   src/follow_drone.py \
   src/hailo_person_detector.py \
-  src/safety_supervisor_v2.py \
   tests/hardware/takeoff_hover_land_test.py
 ```
 
@@ -176,10 +176,10 @@ Pass criteria:
 
 * The selected person remains locked.
 * The target does not unexpectedly switch to another person.
-* `forward` and `yaw` commands change smoothly.
+* Forward/yaw visual guidance changes smoothly; the controller converts it to bounded position/yaw setpoints.
 * Commands return toward zero when the target is centered and near the target distance.
 * Loss of valid depth does not produce unsafe commands.
-* Loss of the target produces a zero horizontal and yaw command.
+* With no valid target, visual guidance is zero and the controller holds the last complete N/E/D/yaw target.
 * No rapid repeated switching occurs between maximum speed and zero.
 
 ### 3. Outdoor Takeoff, Hover, and Land Test
@@ -224,7 +224,7 @@ Expected:
 * `Locked YES` remains stable.
 * Person detection remains reliable in outdoor lighting.
 * Depth measurements remain available.
-* `forward` and `yaw` commands look reasonable.
+* Forward/yaw visual guidance and position-follow status look reasonable.
 * Terminal remains in `[DRY]` mode.
 * Wi-Fi and WebRTC remain stable at the intended operating distance.
 
@@ -260,7 +260,7 @@ Abort immediately if any of the following occurs:
 * Video freezes or becomes severely delayed.
 * Repeated `HAILO ERROR` messages appear.
 * Depth becomes unavailable or unstable.
-* Forward or yaw commands oscillate rapidly.
+* Guidance or position/yaw setpoints oscillate rapidly.
 * Vehicle yaws, climbs, descends, or moves unexpectedly.
 * Position or GPS becomes unhealthy.
 * Raspberry Pi reports undervoltage or thermal throttling.
@@ -280,10 +280,10 @@ Keep these current files in the repository:
 ```text
 src/follow_drone.py
 src/hailo_person_detector.py
-src/safety_supervisor_v2.py
 tests/hardware/takeoff_hover_land_test.py
 docs/field_ops/field_test_checklist.md
 README.md
+docs/reference/lidar_reference.md
 ```
 
 Do not commit generated or machine-specific files:

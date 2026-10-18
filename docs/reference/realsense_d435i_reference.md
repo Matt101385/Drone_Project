@@ -34,19 +34,21 @@ Current main program settings:
 | --- | --- |
 | Color stream | 640 x 480 |
 | Depth stream | 640 x 480 |
-| FPS | 15 |
+| FPS | 30 |
 | Color format | `bgr8` |
 | Depth format | `z16` |
 | Minimum valid depth | 0.3 m |
-| Maximum valid depth | 6.0 m |
-| Target follow distance | 4.0 m |
+| Maximum valid depth | 10.0 m |
+| Target follow distance | 2.0 m |
+
+The main program currently uses RealSense depth for target-distance estimation. The reported LiDAR is not read by the main program; see [LiDAR reference](lidar_reference.md).
 
 ## Python Check
 
 From the active project environment:
 
 ```bash
-cd ~/matt_drone/follow_project
+cd ~/Drone_Project
 source .venv/bin/activate
 python -c "import pyrealsense2 as rs; print('realsense ok')"
 ```

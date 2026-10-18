@@ -17,8 +17,8 @@ Collected from the Pi terminal.
 | OS build | Debian 1:6.12.75-1+rpt1 |
 | Kernel build date | 2026-03-11 |
 | Python | Python 3.13.5 |
-| Main project path | `~/matt_drone/follow_project` |
-| Main virtual environment | `~/matt_drone/follow_project/.venv` |
+| Main project path | `~/Drone_Project` (active path recorded in field checklist) |
+| Main virtual environment | `~/Drone_Project/.venv` |
 
 Raw `uname -a` output:
 
@@ -31,7 +31,7 @@ Linux MattZhang 6.12.75+rpt-rpi-2712 #1 SMP PREEMPT Debian 1:6.12.75-1+rpt1 (202
 Run this first in each Pi terminal:
 
 ```bash
-cd ~/matt_drone/follow_project
+cd ~/Drone_Project
 source .venv/bin/activate
 ```
 
@@ -53,13 +53,15 @@ Python 3.13.5
 | Layer | Current use |
 | --- | --- |
 | Camera access | Intel RealSense D435i through Python |
-| Computer vision | YOLO11n |
+| Person detection | Hailo-10H via `src/hailo_person_detector.py` |
+| Distance sensing | RealSense D435i depth; main program does not read LiDAR |
 | Web stream | WebRTC / browser interface on port `8080` |
 | Flight-control link | MAVSDK / MAVLink to Pixhawk over serial |
-| Safety layer | `src/safety_supervisor_v2.py` |
+| Follow control | `PositionNedYaw` setpoints with PX4 NED feedback in `src/follow_drone.py` |
 
 ## Notes
 
-- The old `~/follow_project` path is historical.
-- The active project path is `~/matt_drone/follow_project`.
+- Active repository path recorded by the field checklist: `~/Drone_Project`; confirm on-device before running.
+- Main program logs to `~/follow_project/logs`, a separate legacy output path; code behavior is unchanged.
+- LiDAR model/interface/role still need recording; the main program does not consume its data.
 - If `which python` points to `/usr/bin/python`, the virtual environment is not active.

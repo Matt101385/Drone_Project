@@ -2,7 +2,7 @@
 
 ## Current Role
 
-Pixhawk 6X is the flight controller. PX4 runs the flight-control stack. The Raspberry Pi 5 sends MAVLink/MAVSDK commands through the Pixhawk TELEM2 serial port.
+Pixhawk 6X is the flight controller. PX4 runs the flight-control stack. The Raspberry Pi 5 sends MAVLink/MAVSDK commands through TELEM2. Follow control uses PX4 NED feedback and `PositionNedYaw` setpoints.
 
 ## Confirmed Hardware
 
@@ -16,6 +16,7 @@ Pixhawk 6X is the flight controller. PX4 runs the flight-control stack. The Rasp
 | Flight controller | Pixhawk 6X |
 | Firmware stack | PX4 |
 | GPS module | Holybro M10 GPS module |
+| LiDAR | Reported installed; details not recorded; not read by current main program |
 | Battery type | 4S LiPo, XT60 |
 | Recommended battery | 4S 3000-5000 mAh, 20C+ LiPo |
 | Motors | Holybro 2216 KV920 motors x4 |
@@ -39,7 +40,7 @@ The current vehicle is the Holybro X500 V2 development platform. The frame kit i
 | Pi TX | GPIO14 / pin 8 |
 | Pi RX | GPIO15 / pin 10 |
 | Pixhawk port | TELEM2 |
-| Baud rate | 57600 |
+| Baud rate | 57600 (previously recorded; verify on vehicle) |
 | Wiring rule | TX to RX, RX to TX, shared GND |
 
 Wiring:
@@ -52,7 +53,7 @@ PX4 TELEM2 GND -> Pi GND
 
 ## PX4 Parameters
 
-Known working settings:
+Previously recorded settings (verify against connected vehicle):
 
 ```text
 MAV_1_CONFIG = TELEM2
@@ -60,6 +61,8 @@ SER_TEL2_BAUD = 57600
 UXRCE_DDS_CFG = Disabled
 MAV_1_FLOW_CTRL = Force off
 ```
+
+**Baud discrepancy:** the program defaults to `serial:///dev/serial0:921600`, while this reference and the hover-test command use 57600. Verify and match the actual TELEM2 configuration before real follow; do not change PX4 based only on this document.
 
 Reboot the flight controller after changing serial or MAVLink parameters.
 
@@ -113,4 +116,5 @@ Received parameters
 - Actual battery capacity, C rating, and weight from the battery label.
 - RC receiver model.
 - Power module or BEC model if separate from the X500 V2 power distribution setup.
-- Full takeoff weight with battery, Pi 5, RealSense, and mounts.
+- Full takeoff weight with battery, Pi 5, RealSense, LiDAR, and mounts.
+- LiDAR model, interface/protocol, power source, mount, and intended role.
