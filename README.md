@@ -40,7 +40,6 @@ LiDAR → PX4 EKF Range Finder (owner-reported; physical interface not yet docum
 ## Repository Layout
 
 ~~~text
-archive/                 Historical notes and experiments; not current runtime
 docs/field_ops/          Field checklist
 docs/reference/          Hardware and software references
 docs/development/        Environment and verification notes
@@ -89,7 +88,7 @@ Current limitations include no obstacle avoidance, persistent person re-identifi
 
 ## History and References
 
-Historical prototypes and notes are kept under [archive/](archive/); current hardware/software facts are indexed in [docs/reference/](docs/reference/). Archive files are not active runtime entry points.
+Historical prototypes and development notes are preserved on the [`archive-history` branch](https://github.com/Matt101385/Drone_Project/tree/archive-history/archive); they are not part of the default `main` view or current runtime. Current hardware/software facts are indexed in [docs/reference/](docs/reference/).
 
 ## Author and Disclaimer
 
