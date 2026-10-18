@@ -1,184 +1,98 @@
 # Depth-Aware Person-Following Drone
 
-A vision-based person-following quadrotor built with PX4, Raspberry Pi 5, Intel RealSense D435i, Hailo-10H person detection, and MAVSDK Offboard control.
+A PX4 person-following quadrotor using a Raspberry Pi 5, Hailo-10H person detection, Intel RealSense D435i depth, and MAVSDK Offboard control.
 
-The system detects people, allows an operator to select a target through a web interface, estimates target distance using RealSense depth, and converts bounded visual guidance into local-NED position/yaw setpoints.
+The Pi application converts target-distance and image-position guidance into local-NED `PositionNedYaw` setpoints. PX4 NED telemetry provides position feedback.
 
-## Project Status
+## Current Status
 
-**Version:** v1.0 baseline  
-**Status:** Field-tested working prototype
+Working prototype. The main flight program is `src/follow_drone.py`; the Hailo detector wrapper is `src/hailo_person_detector.py`. Current target distance is 2.0 m. At follow entry the program captures the current N/E/D/yaw target; when valid visual guidance is absent, it holds the last complete target.
 
-## Project Status
-
-**Status:** Working prototype; verify vehicle configuration and complete staged checks before real flight.
-
-The current main program runs Hailo-10H person detection, operator target selection, RealSense depth estimation, PX4 NED position feedback, and `PositionNedYaw` setpoints. On follow entry it captures current position/yaw; without valid visual guidance it holds the last complete N/E/D/yaw target. The Down (altitude) target remains at its captured value.
-
-The LiDAR is reported as installed, but its model/interface are not recorded and the current main program does not read its data. Do not rely on it for obstacle avoidance or flight control.
+The owner reports PX4 EKF configured to use `Range Finder`. This is a PX4-side rangefinder/estimation setting; the Pi follow program does not read the LiDAR stream directly. It does not provide obstacle avoidance. Device details and the exact PX4 parameter are still being recorded in the [LiDAR reference](docs/reference/lidar_reference.md) and [PX4 reference](docs/reference/pixhawk_px4_reference.md).
 
 ## System Architecture
 
 ~~~text
-Intel RealSense D435i
-        |
-        v
-Raspberry Pi 5
-  - YOLO11n person detection
-  - Click-to-select target
-  - Depth-based distance estimation
-  - Follow-command generation
-  - WebRTC monitoring interface
-  - Flight-data logging
-        |
-        v
-MAVSDK / PX4 Offboard Control
-        |
-        v
-Pixhawk 6X
-        |
-        v
-Holybro X500 V2 Quadcopter
+RealSense D435i color/depth → Raspberry Pi 5 + Hailo-10H
+                                    - person detection/selection
+                                    - visual distance/yaw guidance
+                                    - WebRTC monitoring
+                                                |
+                                                v
+                                  MAVSDK Offboard / PX4
+                                  NED feedback + PositionNedYaw
+                                                |
+                                                v
+                                      Pixhawk 6X / X500 V2
+
+LiDAR → PX4 EKF Range Finder (owner-reported; physical interface not yet documented)
 ~~~
 
-## Hardware Platform
+## Hardware
 
-- Holybro X500 V2 quadcopter platform
-- Pixhawk 6X flight controller
-- PX4 flight-control software
-- Raspberry Pi 5 companion computer
-- Intel RealSense D435i depth camera
-- LiDAR (reported installed; model/interface and role to be recorded)
-- Holybro M10 GPS
-- 4S LiPo battery
-- Serial connection from Raspberry Pi to Pixhawk TELEM2
+- Holybro X500 V2 with Pixhawk 6X / PX4
+- Raspberry Pi 5 with Hailo-10H AI HAT
+- Intel RealSense D435i
+- LiDAR (reported; see references for unconfirmed details)
+- Holybro M10 GPS and 4S LiPo
+- Pi-to-Pixhawk TELEM2 serial link
 
-Current hardware and environment information is stored in [`docs/reference/`](docs/reference/); see [`docs/reference/lidar_reference.md`](docs/reference/lidar_reference.md) for LiDAR status.
-
-## Main Software
+## Repository Layout
 
 ~~~text
-src/
-├── follow_drone.py             Main vision and position-follow runtime
-└── hailo_person_detector.py    Hailo-10H detector
+archive/                 Historical notes and experiments; not current runtime
+docs/field_ops/          Field checklist
+docs/reference/          Hardware and software references
+docs/development/        Environment and verification notes
+models/                  Legacy model assets; verify before cleanup
+src/                     Current runtime
+tests/hardware/          Hardware flight-test utility
+.github/workflows/       Non-flight CI checks
 ~~~
 
-### `follow_drone.py`
+`models/` and root `yolo11n.pt` are retained legacy assets; the active Hailo detector resolves a `.hef` model from the Pi/Hailo environment. Do not assume those legacy assets are used by the main program.
 
-`src/follow_drone.py` contains the follow controller and its prestream, telemetry, and manual-override handling; there is no separate `safety_supervisor_v2.py` module in this repository. This documentation update does not modify the main program.
+## Run
 
-## Repository Structure
-
-~~~text
-archive/                 Historical notes, prototypes, and validation material
-docs/field_ops/          Field-test checklist
-docs/reference/          Current hardware and software references
-models/                  Model assets
-src/                     Runtime software
-tests/hardware/          Hardware flight-test utilities
-
-## Running the Software
-
-The application defaults to dry mode. It does not send real flight commands unless real control is explicitly enabled.
-
-### Dry Mode
+The program defaults to dry mode:
 
 ~~~bash
 FOLLOW_REAL=0 python3 src/follow_drone.py
 ~~~
 
-### Real PX4 Control
+Real control requires staged testing, RC takeover readiness, and a matching TELEM2 baud. The code default is `serial:///dev/serial0:921600`, while the PX4 reference and standalone hover-test command record `57600`. Resolve this against the vehicle before real follow; do not change either setting based only on this README.
 
 ~~~bash
 FOLLOW_REAL=1 python3 src/follow_drone.py
 ~~~
 
-The default PX4 serial connection is:
+WebRTC monitoring and target selection: `http://<raspberry-pi-ip>:8080`.
 
-~~~text
-serial:///dev/serial0:921600 (code default; verify actual TELEM2 baud before real control)
-~~~
+## Current Control Settings
 
-The WebRTC monitoring and target-selection interface is available at:
-
-~~~text
-http://<raspberry-pi-ip>:8080
-~~~
-
-## Baseline Control Configuration
-
-| Parameter | Baseline value |
+| Setting | Main-program value |
 | --- | ---: |
-| Setting | Current main-program value |
-| --- | ---: |
-| Target following distance | 2.0 m |
+| Target distance | 2.0 m |
 | Distance deadband | ±0.30 m |
-| Maximum forward visual guidance | 0.8 m/s (converted to bounded position guidance) |
-| Maximum yaw visual guidance | ±30 deg/s (converted to bounded yaw guidance) |
+| Maximum forward visual guidance | 0.8 m/s, converted to bounded position guidance |
+| Maximum yaw visual guidance | ±30 deg/s, converted to bounded yaw guidance |
 | Position setpoint rate | 10 Hz |
 | Horizontal position leash | 1.00 m |
 | Yaw leash | ±30° |
-| Down/altitude target | Hold captured NED Down target |
+| Down target | Captured NED Down value held |
 
-## Safety Notes
+## Safety and Limitations
 
-This repository contains experimental autonomous-flight software.
+This is experimental autonomous-flight software. Follow the [field-test checklist](docs/field_ops/field_test_checklist.md), verify RC override and vehicle health, test in a controlled area with an observer, and comply with applicable rules.
 
-Before real flight:
+Current limitations include no obstacle avoidance, persistent person re-identification, global path planning, automatic takeoff/landing in the follow program, or authentication on the WebRTC interface. PX4 EKF Range Finder is not an obstacle-avoidance feature. Target continuity may fail when people cross or move close together.
 
-- Complete dry-mode testing
-- Verify RC override and flight-mode recovery
-- Confirm Pixhawk, GPS, and TELEM2 communication
-- Confirm motor and propeller direction
-- Use an open and controlled test area
-- Maintain a safety observer
-- Keep the aircraft within visual line of sight
-- Keep the web interface on a trusted local network
-- Follow all applicable aviation regulations
+## History and References
 
-## Known Limitations
+Historical prototypes and notes are kept under [archive/](archive/); current hardware/software facts are indexed in [docs/reference/](docs/reference/). Archive files are not active runtime entry points.
 
-The current v1.0 system does not include:
-
-- LiDAR integration and obstacle avoidance
-- Persistent person re-identification
-- Reliable multi-person identity tracking
-- Global path planning
-- Automatic takeoff or landing in the main follow program
-- Authentication for the WebRTC interface
-
-Target continuity is based mainly on the proximity of detection boxes between consecutive frames. The tracker may switch targets when multiple people cross or move close together.
-
-The current controller holds the Down target captured on follow entry; it does not provide LiDAR ranging or obstacle avoidance.
-
-## Development History
-
-Historical engineering notes and prototype programs are preserved in:
-
-- [`archive/development_log/`](archive/development_log/)
-- [`archive/experiments/`](archive/experiments/)
-
-These files document the progression from basic RealSense capture and early object-detection methods to the final PX4-integrated person-following system.
-
-## Future Work
-
-Potential future directions include:
-
-- Obstacle detection and avoidance
-- Target re-identification
-- Dynamic altitude selection
-- Improved depth filtering
-- Quantitative altitude and distance-error evaluation
-- Target-loss recovery
-- Path planning around obstacles
-- Multi-sensor fusion
-
-These items are planned research directions and are not part of the current v1.0 implementation.
-
-## Author
+## Author and Disclaimer
 
 **Muxi Zhang**
 
-## Disclaimer
-
-This repository is provided for educational and research purposes. Autonomous aircraft testing involves substantial safety and regulatory risks. Users are responsible for safe operation and compliance with all applicable laws, regulations, and operating requirements.
+Educational and research use only. Autonomous aircraft testing carries substantial safety and regulatory risks; users are responsible for safe operation.

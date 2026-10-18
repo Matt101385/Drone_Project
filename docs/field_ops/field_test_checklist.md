@@ -1,6 +1,6 @@
 # Field Test Checklist
 
-This checklist is for the Raspberry Pi 5 + Hailo-10H + Pixhawk 6X + Intel RealSense D435i person-following drone. A LiDAR is reported installed; see [its reference](../reference/lidar_reference.md). The current main program does not read LiDAR data.
+This checklist is for the Raspberry Pi 5 + Hailo-10H + Pixhawk 6X + Intel RealSense D435i person-following drone. The owner reports PX4 EKF set to `Range Finder`; verify the actual setting and sensor health in QGroundControl. The Pi follow program does not read LiDAR directly and provides no obstacle avoidance. See the [LiDAR reference](../reference/lidar_reference.md).
 
 ## Operating Modes
 
@@ -56,7 +56,7 @@ Do not run numbered development filenames such as `11_follow_safe.py` or `13_tak
 * Props are undamaged and mounted in the correct direction.
 * Frame, arms, camera mount, Raspberry Pi mount, AI HAT, and Pixhawk mount are tight.
 * Intel RealSense D435i is connected and firmly mounted.
-* LiDAR (if installed) is securely mounted and powered; identify its model/interface. Do not rely on it for avoidance/control: it is not integrated.
+* LiDAR (if installed) is securely mounted and powered; identify its model/interface. Verify PX4 reports valid rangefinder data if using EKF Range Finder. This does not provide obstacle avoidance.
 * Hailo-10H AI HAT and its heatsink are firmly installed.
 * Raspberry Pi active cooling is operating.
 * Raspberry Pi, AI HAT, and RealSense use a suitable regulated power supply.

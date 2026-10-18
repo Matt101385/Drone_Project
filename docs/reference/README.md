@@ -13,4 +13,4 @@ Use these files for final reports, field checks, and rebuild notes:
 
 Historical notes and prototypes are preserved under `archive/`. `docs/reference/` records current known facts; unverified details are marked as such.
 
-Update this folder whenever the hardware, software versions, startup commands, or wiring change.
+Update this folder whenever the hardware, software versions, startup commands, or wiring change. Development and verification notes are under `docs/development/`.

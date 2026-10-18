@@ -54,7 +54,9 @@ Python 3.13.5
 | --- | --- |
 | Camera access | Intel RealSense D435i through Python |
 | Person detection | Hailo-10H via `src/hailo_person_detector.py` |
-| Distance sensing | RealSense D435i depth; main program does not read LiDAR |
+| Person-distance guidance | RealSense D435i depth |
+| PX4 rangefinder aiding | EKF reported configured as `Range Finder`; verify actual parameter/status in PX4 |
+| Companion LiDAR access | Main follow program does not read the LiDAR stream |
 | Web stream | WebRTC / browser interface on port `8080` |
 | Flight-control link | MAVSDK / MAVLink to Pixhawk over serial |
 | Follow control | `PositionNedYaw` setpoints with PX4 NED feedback in `src/follow_drone.py` |
@@ -63,5 +65,6 @@ Python 3.13.5
 
 - Active repository path recorded by the field checklist: `~/Drone_Project`; confirm on-device before running.
 - Main program logs to `~/follow_project/logs`, a separate legacy output path; code behavior is unchanged.
-- LiDAR model/interface/role still need recording; the main program does not consume its data.
+- PX4 EKF is reported configured for `Range Finder`; exact parameter ID/value and live sensor health still need confirmation.
+- The companion follow program does not consume the LiDAR stream and has no obstacle-avoidance logic.
 - If `which python` points to `/usr/bin/python`, the virtual environment is not active.

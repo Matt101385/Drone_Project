@@ -62,7 +62,7 @@ UXRCE_DDS_CFG = Disabled
 MAV_1_FLOW_CTRL = Force off
 ```
 
-**EKF rangefinder setting:** The owner reports configuring the EKF sensor/source setting to `Range Finder`. The exact PX4 parameter name/value and firmware version have not yet been captured; verify them in QGroundControl before treating this as a complete parameter record.
+**EKF rangefinder setting:** Owner-reported as `Range Finder`. The exact PX4 parameter ID/value, firmware version, and sensor health have not yet been captured; verify them in QGroundControl on the vehicle. This is a PX4 estimator/rangefinder setting, not obstacle avoidance.
 
 **Baud discrepancy:** the program defaults to `serial:///dev/serial0:921600`, while this reference and the hover-test command use 57600. Verify and match the actual TELEM2 configuration before real follow; do not change PX4 based only on this document.
 

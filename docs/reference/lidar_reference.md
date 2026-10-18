@@ -12,11 +12,13 @@ The project owner reports that a LiDAR has been added to the aircraft. These det
 | Mounting position and orientation | To be recorded |
 | Intended role | To be confirmed |
 
-## Current Software Status
+## Current Status
 
-The current `src/follow_drone.py` does not initialize a LiDAR driver or read a LiDAR stream. Target-distance guidance uses Intel RealSense D435i depth, and position feedback comes from PX4 NED telemetry. LiDAR is not currently part of the follow-control or obstacle-avoidance path.
+The owner reports that PX4 EKF is configured to use `Range Finder`. This records the reported PX4-side rangefinder/estimation configuration; the exact parameter ID/value, firmware version, and sensor status still need to be verified and captured in QGroundControl.
 
-Do not treat the installed LiDAR as an active safety feature until its model/interface are identified, integration is implemented, and behavior is tested safely on the bench and in staged tests.
+The Raspberry Pi companion program `src/follow_drone.py` does not initialize a LiDAR driver or read the LiDAR stream. It uses RealSense depth for person-distance guidance and receives PX4 NED telemetry for position feedback. The EKF setting is not obstacle avoidance, and the follow program has no LiDAR-based obstacle-avoidance logic.
+
+Before relying on rangefinder data for height estimation, verify the sensor is detected and healthy in PX4/QGroundControl and confirm the parameter on the actual vehicle.
 
 ## Details To Record
 
