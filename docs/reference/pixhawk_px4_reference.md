@@ -16,7 +16,7 @@ Pixhawk 6X is the flight controller. PX4 runs the flight-control stack. The Rasp
 | Flight controller | Pixhawk 6X |
 | Firmware stack | PX4 |
 | GPS module | Holybro M10 GPS module |
-| LiDAR | Reported installed; details not recorded; not read by current main program |
+| LiDAR / EKF rangefinder | Reported installed; PX4 EKF setting is configured as `Range Finder` (owner-confirmed); LiDAR model/interface and exact PX4 parameter ID/value are not recorded. The Pi follow program does not read the LiDAR directly. |
 | Battery type | 4S LiPo, XT60 |
 | Recommended battery | 4S 3000-5000 mAh, 20C+ LiPo |
 | Motors | Holybro 2216 KV920 motors x4 |
@@ -61,6 +61,8 @@ SER_TEL2_BAUD = 57600
 UXRCE_DDS_CFG = Disabled
 MAV_1_FLOW_CTRL = Force off
 ```
+
+**EKF rangefinder setting:** The owner reports configuring the EKF sensor/source setting to `Range Finder`. The exact PX4 parameter name/value and firmware version have not yet been captured; verify them in QGroundControl before treating this as a complete parameter record.
 
 **Baud discrepancy:** the program defaults to `serial:///dev/serial0:921600`, while this reference and the hover-test command use 57600. Verify and match the actual TELEM2 configuration before real follow; do not change PX4 based only on this document.
 
