@@ -10,10 +10,13 @@ import logging
 from datetime import datetime
 from hailo_person_detector import HailoPersonDetector
 import asyncio
+#from dataset_logger import maybe_capture
 
 from aiohttp import web
 from aiortc import RTCPeerConnection, RTCSessionDescription, VideoStreamTrack
 from av import VideoFrame
+
+
 
 
 
@@ -57,10 +60,11 @@ DEADBAND = 0.06
 MAX_YAW_CMD = 30.0
 
 # forward distance control
-TARGET_DIST_M = 4.0
+TARGET_DIST_M = 2.0
 DIST_DEADBAND = 0.30
 Kp_forward = 0.65
 MAX_FORWARD_CMD = 0.8
+CAMERA_TILT_DEG = 30.0
 
 # altitude hold in Offboard mode
 
@@ -71,9 +75,10 @@ DEPTH_MAX_M = 10.0
 
 
 latest_frame = None
+latest_pitch_deg = 0.0
 webrtc_pcs = set()
 vision_lock = threading.Lock()
-command_lock = threading.Lock() 
+command_lock = threading.Lock()
 selected_click = None
 selected_target = None
 pipeline = None
@@ -84,22 +89,30 @@ MAX_TARGET_LOST = 16
 
 FOLLOW_REAL = os.environ.get("FOLLOW_REAL") == "1"
 PX4_ADDR = os.environ.get("PX4_ADDR", "serial:///dev/serial0:921600")
+
 FOLLOW_COMMAND_HZ = 10
 FOLLOW_COMMAND_INTERVAL = 1.0 / FOLLOW_COMMAND_HZ
 
 # Position Follow
 POSITION_SETPOINT_HZ = 10.0
+YAW_TELEMETRY_MAX_AGE_S = 1.0
 POSITION_FOLLOW_LEASH_M = 1.00
 POSITION_FOLLOW_YAW_LEASH_DEG = 30.0
+MAX_DIRECT_FORWARD_OFFSET_M = 0.60
+DIST_RATE_KD_S = 0.35
+DIST_RATE_FILTER_ALPHA = 0.20
+DIST_RATE_DEADBAND_M_S = 0.10
 
 latest_follow_command = {
     "forward_m_s": 0.0,
+    "distance_error_m": 0.0,
+    "right_error_m": 0.0,
     "yaw_deg_s": 0.0,
     "target_locked": False,
     "source": "no-target",
     "control_mode": "DRY / VISION ONLY" if not FOLLOW_REAL else "PX4 CONNECTING",
 
-    
+
     "updated_monotonic": time.monotonic(),
 }
 # =========================
@@ -123,12 +136,12 @@ def start_pipeline():
     logger.info("Starting RealSense pipeline")
     pipeline = rs.pipeline()
     cfg = rs.config()
-    
+
     cfg.enable_stream(rs.stream.color, WIDTH, HEIGHT, rs.format.bgr8, FPS)
     cfg.enable_stream(rs.stream.depth, WIDTH, HEIGHT, rs.format.z16, FPS)
-    
+
     pipeline.start(cfg)
-    
+
     align = rs.align(rs.stream.color)
     logger.info(f"align created: {align is not None}")
     logger.info("RealSense pipeline started successfully")
@@ -204,14 +217,38 @@ def get_target_distance(depth_frame, cx, cy, box, win=5):
 
     return float(np.median(samples))
 
+def get_realsense_agl(depth_frame, pitch_deg, camera_tilt_deg=30.0):
+    intrin = depth_frame.profile.as_video_stream_profile().intrinsics
+    w = intrin.width
+    h = intrin.height
+    heights = []
+    tilt_rad = math.radians(camera_tilt_deg)
+    pitch_rad = math.radians(float(pitch_deg))
+    for py in range(int(h * 0.68), int(h * 0.88), 12):
+        for px in range(int(w * 0.40), int(w * 0.60), 12):
+            d = depth_frame.get_distance(px, py)
+            if d <= 0.15 or d >= DEPTH_MAX_M: continue
+            point = rs.rs2_deproject_pixel_to_point(intrin, [float(px), float(py)], float(d))
+            cam_y = float(point[1])
+            cam_z = float(point[2])
+            body_forward_m = cam_z * math.cos(tilt_rad) - cam_y * math.sin(tilt_rad)
+            body_down_m = cam_z * math.sin(tilt_rad) + cam_y * math.cos(tilt_rad)
+            camera_agl_m = -body_forward_m * math.sin(pitch_rad) + body_down_m * math.cos(pitch_rad)
+            if 0.05 < camera_agl_m < 10.0: heights.append(camera_agl_m)
+    return float(np.median(heights)) if len(heights) >= 5 else None
+
 def update_follow_command(
     forward_m_s,
     yaw_deg_s,
     target_locked,
     source,
+    distance_error_m=0.0,
+    right_error_m=0.0,
 ):
     with command_lock:
         latest_follow_command["forward_m_s"] = float(forward_m_s)
+        latest_follow_command["distance_error_m"] = float(distance_error_m)
+        latest_follow_command["right_error_m"] = float(right_error_m)
         latest_follow_command["yaw_deg_s"] = float(yaw_deg_s)
         latest_follow_command["target_locked"] = bool(target_locked)
         latest_follow_command["source"] = str(source)
@@ -228,7 +265,7 @@ def read_follow_command():
 
 async def watch_px4_state(drone, state):
 
-    
+
 
     async def watch_local_position():
         async for pv in drone.telemetry.position_velocity_ned():
@@ -237,19 +274,23 @@ async def watch_px4_state(drone, state):
             state["down_m"] = float(pv.position.down_m)
 
     async def watch_attitude():
+        global latest_pitch_deg
         async for attitude in drone.telemetry.attitude_euler():
             state["yaw_abs_deg"] = float(attitude.yaw_deg)
+            state["yaw_updated_monotonic"] = time.monotonic()
+            state["pitch_deg"] = float(attitude.pitch_deg)
+            latest_pitch_deg = float(attitude.pitch_deg)
 
 
 
-    await asyncio.gather(   
+    await asyncio.gather(
         watch_local_position(),
         watch_attitude(),
     )
-        
-        
-        
-        
+
+
+
+
 
 async def wait_until_connected(drone):
     print(f"[PX4] connecting to {PX4_ADDR} ...")
@@ -257,7 +298,7 @@ async def wait_until_connected(drone):
         if state.is_connected:
             print("[PX4] connected")
             return
-        
+
 async def watch_manual_override(
     drone,
     offboard_started_event,
@@ -303,6 +344,28 @@ def wrap_360(angle_deg):
     return float(angle_deg) % 360.0
 
 
+def yaw_telemetry_is_fresh(px4_state, now=None):
+    yaw = px4_state.get("yaw_abs_deg")
+    updated_at = px4_state.get("yaw_updated_monotonic")
+    if yaw is None or updated_at is None:
+        return False
+
+    try:
+        yaw = float(yaw)
+        updated_at = float(updated_at)
+    except (TypeError, ValueError):
+        return False
+
+    if not math.isfinite(yaw) or not math.isfinite(updated_at):
+        return False
+
+    if now is None:
+        now = time.monotonic()
+
+    age_s = now - updated_at
+    return 0.0 <= age_s <= YAW_TELEMETRY_MAX_AGE_S
+
+
 async def wait_for_local_pose(px4_state, timeout_s=5.0):
     start = time.monotonic()
 
@@ -317,7 +380,7 @@ async def wait_for_local_pose(px4_state, timeout_s=5.0):
         if all(
             value is not None and math.isfinite(float(value))
             for value in values
-        ):
+        ) and yaw_telemetry_is_fresh(px4_state):
             return {
                 "north_m": float(px4_state["north_m"]),
                 "east_m": float(px4_state["east_m"]),
@@ -341,7 +404,7 @@ async def position_setpoint_sender(
     target,
     px4_state,
     manual_override_event,
-    position_error_event,
+    position_error_event,    prestream_stats=None,
 ):
     from mavsdk.offboard import PositionNedYaw
 
@@ -385,6 +448,7 @@ async def position_setpoint_sender(
                 call_duration,
             )
 
+            if prestream_stats is not None: prestream_stats["success_count"] = prestream_stats.get("success_count", 0) + 1; prestream_stats["first_success_at"] = prestream_stats.get("first_success_at") or time.monotonic(); prestream_stats["last_success_at"] = time.monotonic()
         except Exception as exc:
             print(
                 f"[POSITION] set_position_ned failed: {exc}",
@@ -436,6 +500,8 @@ async def position_follow_loop(
 
     fixed_down_m = float(target["down_m"])
 
+    hold_latched = False
+
     last_time = time.monotonic()
     last_print = 0.0
 
@@ -466,23 +532,28 @@ async def position_follow_loop(
             and actual_yaw is not None
         )
 
+        if not target_locked:
+            prev_forward_distance_m = None
+            prev_distance_rate_time = None
+            filtered_distance_rate_m_s = 0.0
         if target_locked:
+            hold_latched = False
             # ------------------------------------------------
             # FORWARD GUIDANCE -> MOVING POSITION TARGET
             # ------------------------------------------------
             heading_rad = math.radians(float(actual_yaw))
 
-            step_m = float(cmd["forward_m_s"]) * dt
-
-            proposed_n = (
-                float(target["north_m"])
-                + step_m * math.cos(heading_rad)
+            forward_offset_m = max(
+                -MAX_DIRECT_FORWARD_OFFSET_M,
+                min(
+                    MAX_DIRECT_FORWARD_OFFSET_M,
+                    float(cmd["distance_error_m"]),
+                ),
             )
+            right_offset_m = float(cmd["right_error_m"])
 
-            proposed_e = (
-                float(target["east_m"])
-                + step_m * math.sin(heading_rad)
-            )
+            proposed_n = float(actual_n) + forward_offset_m * math.cos(heading_rad) - right_offset_m * math.sin(heading_rad)
+            proposed_e = float(actual_e) + forward_offset_m * math.sin(heading_rad) + right_offset_m * math.cos(heading_rad)
 
             # ------------------------------------------------
             # POSITION LEASH
@@ -547,9 +618,14 @@ async def position_follow_loop(
             )
 
         else:
-            if actual_n is not None and actual_e is not None:
+            if (
+                not hold_latched
+                and actual_n is not None
+                and actual_e is not None
+            ):
                 target["north_m"] = float(actual_n)
                 target["east_m"] = float(actual_e)
+                hold_latched = True
 
             target["down_m"] = fixed_down_m
 
@@ -661,6 +737,8 @@ async def follow_control_loop():
 
         # Yaw
         "yaw_abs_deg": None,
+        "yaw_updated_monotonic": None,
+        "pitch_deg": None,
     }
 
     manual_override_task = asyncio.create_task(
@@ -729,44 +807,34 @@ async def follow_control_loop():
                 "POSITION HOLD / ENTERING OFFBOARD"
             )
 
-        # First PositionNedYaw setpoint before Offboard start.
-        await drone.offboard.set_position_ned(
-            PositionNedYaw(
-                float(target["north_m"]),
-                float(target["east_m"]),
-                float(target["down_m"]),
-                float(target["yaw_deg"]),
-            )
-        )
 
-        # Keep the same transition behavior that was used
-        # in today's successful Position flight test.
-        await asyncio.sleep(0.2)
+        print("[OFFBOARD] Starting 10 Hz setpoint prestream...", flush=True)
+
+        sender_task = asyncio.create_task(position_setpoint_sender(drone, target, px4_state, manual_override_event, position_error_event))
+
+        await asyncio.sleep(1.5)
+
+        if position_error_event.is_set():
+            print("[OFFBOARD] Prestream failed. Refusing Offboard.", flush=True)
+            return
+
+        print("[OFFBOARD] Prestream complete. Requesting Offboard...", flush=True)
 
         try:
             await drone.offboard.start()
-
         except OffboardError as exc:
-            print(
-                f"[PX4] Offboard start failed: {exc}",
-                flush=True,
-            )
-
+            print(f"[PX4] Offboard start failed: {exc}", flush=True)
             with command_lock:
-                latest_follow_command["control_mode"] = (
-                    "OFFBOARD START FAILED"
-                )
-
+                latest_follow_command["control_mode"] = "OFFBOARD START FAILED"
             return
 
         offboard_active = True
         offboard_started_event.set()
 
+        print("[PX4] OFFBOARD POSITION active.", flush=True)
 
-        print(
-            "[PX4] OFFBOARD POSITION active.",
-            flush=True,
-        )
+
+
 
         print(
             "[PX4] Current D is now the fixed "
@@ -774,18 +842,7 @@ async def follow_control_loop():
             flush=True,
         )
 
-        # ----------------------------------------------------
-        # Dedicated 10 Hz PositionNedYaw sender
-        # ----------------------------------------------------
-        sender_task = asyncio.create_task(
-            position_setpoint_sender(
-                drone,
-                target,
-                px4_state,
-                manual_override_event,
-                position_error_event,
-            )
-        )
+
 
         # ----------------------------------------------------
         # POSITION FOLLOW
@@ -893,6 +950,11 @@ def camera_loop():
     frame_count = 0
     fps_est = 0.0
     last_t = time.time()
+    realsense_agl_m = None
+    last_agl_update = 0.0
+    prev_forward_distance_m = None
+    prev_distance_rate_time = None
+    filtered_distance_rate_m_s = 0.0
 
     try:
         start_pipeline()
@@ -912,14 +974,16 @@ def camera_loop():
 
             try:
                 frames = pipeline.wait_for_frames(timeout_ms=FRAME_TIMEOUT_MS)
-                
+
                 if align is None:
                     raise RuntimeError("align is None")
                 aligned_frames = align.process(frames)
-                
+
                 color_frame = aligned_frames.get_color_frame()
                 depth_frame = aligned_frames.get_depth_frame()
-                
+                now_agl = time.monotonic()
+                if now_agl - last_agl_update >= 0.2: realsense_agl_m = get_realsense_agl(depth_frame, latest_pitch_deg, CAMERA_TILT_DEG); last_agl_update = now_agl
+
                 if not color_frame or not depth_frame:
                     raise RuntimeError("No color frame")
                 lost_count = 0
@@ -939,6 +1003,7 @@ def camera_loop():
                 continue
 
             color_image = np.asanyarray(color_frame.get_data())
+            #dataset_frame = color_image.copy()
 
             # ===== YOLO detection =====
             detect_start = time.time()
@@ -1020,7 +1085,7 @@ def camera_loop():
                     with vision_lock:
                         selected_target = dict(locked_target)
                         selected_click = None
-                        
+
             # keep selected target across frames
             if locked_target is None:
                 with vision_lock:
@@ -1067,13 +1132,19 @@ def camera_loop():
             error_x = 0.0
             err_norm = 0.0
             yaw_cmd = 0.0
-            
+
             target_dist = None
             dist_error = 0.0
             forward_cmd = 0.0
-            
+            forward_distance_m = None
+
+
             target_cx = None
             target_cy = None
+            bbox_h_pct = None
+            bbox_cx_pct = None
+            bbox_cy_pct = None
+            bbox_bottom_pct = None
 
             if locked_target is not None:
                 x1 = locked_target["x1"]
@@ -1082,6 +1153,12 @@ def camera_loop():
                 y2 = locked_target["y2"]
                 target_cx = locked_target["cx"]
                 target_cy = locked_target["cy"]
+                frame_h, frame_w = color_image.shape[:2]
+                bbox_h_pct = 100.0 * (y2 - y1) / frame_h
+                bbox_cx_pct = 100.0 * target_cx / frame_w
+                bbox_cy_pct = 100.0 * target_cy / frame_h
+                bbox_bottom_pct = 100.0 * y2 / frame_h
+                target_dist = get_target_distance(depth_frame, target_cx, target_cy, locked_target, win=5)
 
                 cv2.rectangle(color_image, (x1, y1), (x2, y2), (255, 0, 0), 3)
                 cv2.putText(
@@ -1103,30 +1180,72 @@ def camera_loop():
                 else:
                     yaw_cmd = Kp * err_norm
                     yaw_cmd = max(min(yaw_cmd, MAX_YAW_CMD), -MAX_YAW_CMD)
-                
-                target_dist = get_target_distance(
-                    depth_frame,
-                    target_cx,
-                    target_cy,
-                    locked_target,
-                    win=5
-                )
+
+                distance_error_m = 0.0
+                right_error_m = 0.0
 
                 if target_dist is not None:
-                    dist_error = target_dist - TARGET_DIST_M
+                    intrin = depth_frame.profile.as_video_stream_profile().intrinsics
+                    point = rs.rs2_deproject_pixel_to_point(intrin, [float(target_cx), float(target_cy)], float(target_dist))
+                    cam_x = float(point[0])
+                    cam_y = float(point[1])
+                    cam_z = float(point[2])
+                    right_error_m = cam_x
+                    tilt_rad = math.radians(CAMERA_TILT_DEG)
+                    pitch_rad = math.radians(float(latest_pitch_deg))
+                    body_forward_m = cam_z * math.cos(tilt_rad) - cam_y * math.sin(tilt_rad)
+                    body_down_m = cam_z * math.sin(tilt_rad) + cam_y * math.cos(tilt_rad)
+                    forward_distance_m = body_forward_m * math.cos(pitch_rad) + body_down_m * math.sin(pitch_rad)
 
+                    rate_now = time.monotonic()
+
+                    if prev_forward_distance_m is not None and prev_distance_rate_time is not None:
+                        rate_dt = rate_now - prev_distance_rate_time
+
+                        if 0.02 <= rate_dt <= 0.25:
+                            raw_distance_rate_m_s = (forward_distance_m - prev_forward_distance_m) / rate_dt
+                            filtered_distance_rate_m_s = (1.0 - DIST_RATE_FILTER_ALPHA) * filtered_distance_rate_m_s + DIST_RATE_FILTER_ALPHA * raw_distance_rate_m_s
+                        else:
+                            filtered_distance_rate_m_s = 0.0
+                    prev_forward_distance_m = forward_distance_m
+                    prev_distance_rate_time = rate_now
+
+                    dist_error = forward_distance_m - TARGET_DIST_M
+                    #print(f"[DIST] raw={target_dist:.2f}m forward={forward_distance_m:.2f}m error={dist_error:.2f}m")
                     if abs(dist_error) < DIST_DEADBAND:
-                        forward_cmd = 0.0
+                        position_error_m = 0.0
                     else:
-                        forward_cmd = Kp_forward * dist_error
-                        forward_cmd = max(min(forward_cmd, MAX_FORWARD_CMD), -MAX_FORWARD_CMD)
+                        position_error_m = dist_error
 
-                target_locked = locked_target is not None
+                    if filtered_distance_rate_m_s < -DIST_RATE_DEADBAND_M_S:
+                        braking_rate_m_s = filtered_distance_rate_m_s
+                    else:
+                        braking_rate_m_s = 0.0
+
+                    distance_error_m = position_error_m + DIST_RATE_KD_S * braking_rate_m_s
+
+                    forward_cmd = Kp_forward * distance_error_m
+                    forward_cmd = max(min(forward_cmd, MAX_FORWARD_CMD), -MAX_FORWARD_CMD)
+
+                target_locked = (
+                    locked_target is not None
+                    and target_dist is not None
+                )
                 update_follow_command(
-                    forward_m_s=float(forward_cmd if target_locked else 0.0),
-                    yaw_deg_s=float(yaw_cmd if target_locked else 0.0),
+                    forward_m_s=float(
+                        forward_cmd if target_locked else 0.0
+                    ),
+                    yaw_deg_s=float(
+                        yaw_cmd if target_locked else 0.0
+                    ),
                     target_locked=target_locked,
                     source="pi-vision-11",
+                    distance_error_m=float(
+                        distance_error_m if target_locked else 0.0
+                    ),
+                    right_error_m=float(
+                        right_error_m if target_locked else 0.0
+                    ),
                 )
 
                 cv2.line(
@@ -1138,13 +1257,17 @@ def camera_loop():
                 )
 
             if locked_target is None:
+
+
                 update_follow_command(
                     forward_m_s=0.0,
                     yaw_deg_s=0.0,
                     target_locked=False,
                     source="no-target",
+                    right_error_m=0.0,
                 )
             infer_ms = (time.time() - detect_start) * 1000.0
+            #maybe_capture(dataset_frame, locals())
 
             # ===== Overlay =====
             cv2.drawMarker(
@@ -1188,29 +1311,19 @@ def camera_loop():
                 2,
             )
 
-            if target_dist is not None:
-                cv2.putText(
-                    color_image,
-                    f"DIST {target_dist:.2f} m",
-                    (12, 60),
-                    cv2.FONT_HERSHEY_SIMPLEX,
-                    0.75,
-                    (255, 255, 255),
-                    2,
-                )
-            cv2.putText(
-                color_image,
-                f"FWD {forward_cmd:+.2f} m/s",
-                (12, 90),
-                cv2.FONT_HERSHEY_SIMPLEX,
-                0.75,
-                (255, 255, 255),
-                2,
-            )
+            if target_dist is not None: cv2.putText(color_image, f"RAW {target_dist:.2f} m", (12, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.65, (255, 255, 255), 2)
+            if forward_distance_m is not None: cv2.putText(color_image, f"HORIZ {forward_distance_m:.2f} m", (12, 90), cv2.FONT_HERSHEY_SIMPLEX, 0.65, (0, 255, 255), 2)
+            if realsense_agl_m is not None: cv2.putText(color_image, f"RS AGL {realsense_agl_m:.2f} m", (12, 180), cv2.FONT_HERSHEY_SIMPLEX, 0.65, (0, 255, 0), 2)
+            cv2.putText(color_image, f"PITCH {latest_pitch_deg:+.1f} deg", (12, 120), cv2.FONT_HERSHEY_SIMPLEX, 0.65, (255, 255, 255), 2)
+            cv2.putText(color_image, f"FWD {forward_cmd:+.2f} m/s", (12, 150), cv2.FONT_HERSHEY_SIMPLEX, 0.65, (255, 255, 255), 2)
+            if bbox_h_pct is not None: cv2.putText(color_image, f"BBOX H {bbox_h_pct:.0f}%  Y {bbox_cy_pct:.0f}%", (12, 210), cv2.FONT_HERSHEY_SIMPLEX, 0.65, (0, 255, 255), 2)
+            if bbox_cx_pct is not None: cv2.putText(color_image, f"BBOX X {bbox_cx_pct:.0f}%  BOT {bbox_bottom_pct:.0f}%", (12, 240), cv2.FONT_HERSHEY_SIMPLEX, 0.65, (0, 255, 255), 2)
+            cv2.putText(color_image, f"D-RATE {filtered_distance_rate_m_s:+.2f} m/s", (12, 270), cv2.FONT_HERSHEY_SIMPLEX, 0.65, (255, 255, 255), 2)
+
             with vision_lock:
                 latest_frame = color_image.copy()
- 
-            
+
+
 
         except Exception as e:
             logger.error(f"Main loop unexpected error: {e}")
@@ -1447,7 +1560,7 @@ async def webrtc_status(request):
         "yaw": cmd["yaw_deg_s"],
         "source": cmd["source"],
         "age": age,
-        
+
         # PX4 altitude / vertical debug status
         "control_mode": cmd["control_mode"],
         "follow_real": FOLLOW_REAL,
