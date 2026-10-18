@@ -40,7 +40,7 @@ logging.basicConfig(
 )
 
 logger = logging.getLogger()
-logger.info("YOLO stream program started")
+logger.info("Hailo person-follow program started")
 print(f"[LOG] stream log: {log_file}", flush=True)
 
 # =========================
@@ -51,7 +51,6 @@ FRAME_TIMEOUT_MS = 1000
 MAX_LOST = 5
 RESTART_WAIT_SEC = 2
 
-MODEL_PATH = "yolo11n.pt"
 CONF_THRES = 0.25
 
 # yaw control

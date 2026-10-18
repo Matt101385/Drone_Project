@@ -43,13 +43,12 @@ LiDAR → PX4 EKF Range Finder (owner-reported; physical interface not yet docum
 docs/field_ops/          Field checklist
 docs/reference/          Hardware and software references
 docs/development/        Environment and verification notes
-models/                  Legacy model assets; verify before cleanup
 src/                     Current runtime
 tests/hardware/          Hardware flight-test utility
 .github/workflows/       Non-flight CI checks
 ~~~
 
-`models/` and root `yolo11n.pt` are retained legacy assets; the active Hailo detector resolves a `.hef` model from the Pi/Hailo environment. Do not assume those legacy assets are used by the main program.
+The current detector resolves the Hailo `.hef` model from the Pi/Hailo environment; model assets for older MobileNet/TFLite/PyTorch paths have been removed from `main`.
 
 ## Run
 
