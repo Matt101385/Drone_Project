@@ -44,7 +44,6 @@ docs/field_ops/          Field checklist
 docs/reference/          Hardware and software references
 docs/development/        Environment and verification notes
 src/                     Current runtime
-tests/hardware/          Hardware flight-test utility
 .github/workflows/       Non-flight CI checks
 ~~~
 
