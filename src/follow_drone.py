@@ -632,7 +632,6 @@ async def position_follow_loop(
 async def follow_control_loop():
     # --------------------------------------------------------
     # DRY MODE
-    # Vision continues to run, but nothing is sent to PX4.
     # --------------------------------------------------------
     if not FOLLOW_REAL:
         print(
@@ -739,12 +738,7 @@ async def follow_control_loop():
     offboard_active = False
 
     try:
-        # ----------------------------------------------------
-        # POSITION ENTRY
-        #
-        # Sample the aircraft's CURRENT local pose.
-        # That exact pose becomes the first Offboard target.
-        # ----------------------------------------------------
+       
         current_pose = await wait_for_local_pose(
             px4_state,
             timeout_s=5.0,
@@ -825,15 +819,6 @@ async def follow_control_loop():
 
         # ----------------------------------------------------
         # POSITION FOLLOW
-        #
-        # No valid target:
-        #     hold last N/E/D/Yaw position target.
-        #
-        # Valid target:
-        #     forward guidance -> moving N/E target
-        #     yaw guidance     -> moving Yaw target
-        #
-        # D remains fixed.
         # ----------------------------------------------------
         await position_follow_loop(
             target,
@@ -850,10 +835,7 @@ async def follow_control_loop():
             )
 
     finally:
-        # ----------------------------------------------------
-        # Stop sender first so cleanup cannot emit another
-        # Position setpoint after manual override.
-        # ----------------------------------------------------
+
         if sender_task is not None:
             sender_task.cancel()
 
@@ -864,7 +846,6 @@ async def follow_control_loop():
 
         # ----------------------------------------------------
         # RC/manual override has priority.
-        # Do not send another Offboard command after it.
         # ----------------------------------------------------
         if manual_override_event.is_set():
             print(
@@ -1095,9 +1076,7 @@ def camera_loop():
                     target_lost_count = 0
 
             #这是自动锁定最大的人的代码，暂时注释掉，避免误锁定
-            # fallback: auto lock largest person
-            #if locked_target is None and len(person_boxes) > 0:
-            #   locked_target = max(person_boxes, key=lambda b: b["area"])
+            
 
             # ===== yaw preview only =====
             h, w = color_image.shape[:2]
