@@ -48,7 +48,7 @@ class HailoPersonDetector:
         self.max_detections = int(max_detections)
         self.timeout_ms = int(timeout_ms)
 
-        # Initialize once, then reuse for every frame.
+        
         self._infer = HailoInfer(str(self.hef_path), batch_size=1)
         input_shape = tuple(int(v) for v in self._infer.get_input_shape())
         if len(input_shape) != 3 or input_shape[2] != 3:
@@ -177,7 +177,7 @@ class HailoPersonDetector:
         if frame_bgr.size == 0:
             raise ValueError("frame_bgr is empty")
 
-        # RealSense/OpenCV supplies BGR; Hailo's official standalone path uses RGB.
+        
         frame_rgb = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB)
         model_input = default_preprocess(
             frame_rgb,
@@ -204,7 +204,7 @@ class HailoPersonDetector:
             finally:
                 completion_event.set()
 
-        # Serialize calls because this wrapper exposes a synchronous API.
+       
         with self._lock:
             job = self._infer.run([model_input], inference_callback)
             job.wait(self.timeout_ms)
