@@ -20,8 +20,4 @@ The notes are organized as a development timeline:
 14. Latest startup workflow
 15. GitHub sync and cleanup record
 
-Current main runtime program:
-
-```bash
-python scripts/07_latest_yolo_person_follow_click_target_stream.py
-```
+The historical YOLO prototype is preserved at [archive/experiments/07_latest_yolo_person_follow_click_target_stream.py](../experiments/07_latest_yolo_person_follow_click_target_stream.py). The current runtime is on the `main` branch; these notes describe earlier stages.
