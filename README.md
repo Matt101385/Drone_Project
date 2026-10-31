@@ -6,7 +6,7 @@ The Pi application converts target-distance and image-position guidance into loc
 
 ## Current Status
 
-Working prototype. The main flight program is `src/follow_drone.py`; the Hailo detector wrapper is `src/hailo_person_detector.py`. Current target distance is 2.0 m. At follow entry the program captures the current N/E/D/yaw target; when valid visual guidance is absent, it holds the last complete target.
+Working prototype. The main flight program is `src/follow_drone.py`; the Hailo detector wrapper is `src/hailo_person_detector.py`. Current target distance is 2.0 m. At follow entry the program captures the current N/E/D/yaw target. When visual guidance is lost, it latches the latest available N/E position once, retains the entry D target, and retains the previous yaw target.
 
 The owner reports PX4 EKF configured to use `Range Finder`. This is a PX4-side rangefinder/estimation setting; the Pi follow program does not read the LiDAR stream directly. It does not provide obstacle avoidance. Device details and the exact PX4 parameter are still being recorded in the [LiDAR reference](docs/reference/lidar_reference.md) and [PX4 reference](docs/reference/pixhawk_px4_reference.md).
 
@@ -57,7 +57,7 @@ The program defaults to dry mode:
 FOLLOW_REAL=0 python3 src/follow_drone.py
 ~~~
 
-Real control requires staged testing, RC takeover readiness, and a matching TELEM2 baud. The code default is `serial:///dev/serial0:921600`, while the PX4 reference and standalone hover-test command record `57600`. Resolve this against the vehicle before real follow; do not change either setting based only on this README.
+Real control requires staged testing, RC takeover readiness, and a matching TELEM2 baud. The code default is `serial:///dev/serial0:921600`; the PX4 reference records `57600` from an earlier setup. Confirm the actual setting on the vehicle. The program requests Offboard automatically after connecting and obtaining a pose; it has no separate operator confirmation at that point.
 
 ~~~bash
 FOLLOW_REAL=1 python3 src/follow_drone.py
@@ -71,10 +71,10 @@ WebRTC monitoring and target selection: `http://<raspberry-pi-ip>:8080`.
 | --- | ---: |
 | Target distance | 2.0 m |
 | Distance deadband | ±0.30 m |
-| Maximum forward visual guidance | 0.8 m/s, converted to bounded position guidance |
+| Displayed forward guidance | Clamped to ±0.8 m/s; it is not used as a flight-speed limit |
 | Maximum yaw visual guidance | ±30 deg/s, converted to bounded yaw guidance |
 | Position setpoint rate | 10 Hz |
-| Horizontal position leash | 1.00 m |
+| Horizontal position target offset | At most 1.00 m from the latest position reading |
 | Yaw leash | ±30° |
 | Down target | Captured NED Down value held |
 
@@ -82,7 +82,7 @@ WebRTC monitoring and target selection: `http://<raspberry-pi-ip>:8080`.
 
 This is experimental autonomous-flight software. Follow the [field-test checklist](docs/field_ops/field_test_checklist.md), verify RC override and vehicle health, test in a controlled area with an observer, and comply with applicable rules.
 
-Current limitations include no obstacle avoidance, persistent person re-identification, global path planning, automatic takeoff/landing in the follow program, or authentication on the WebRTC interface. PX4 EKF Range Finder is not an obstacle-avoidance feature. Target continuity may fail when people cross or move close together.
+Current limitations include no obstacle avoidance, persistent person re-identification, global path planning, automatic takeoff/landing in the follow program, or authentication on the WebRTC interface. PX4 EKF Range Finder is not an obstacle-avoidance feature. Target continuity may fail when people cross or move close together. Position and yaw freshness are not continuously checked during follow, and an unmatched target-selection click remains pending. The current code needs these behaviors reviewed and validated before real follow.
 
 ## History and References
 

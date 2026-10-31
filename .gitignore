@@ -13,3 +13,10 @@ color.jpg
 depth.jpg
 realsense_color.jpg
 realsense_depth.jpg
+
+# Local flight outputs, captures, backups, and model assets
+flight_*.csv
+stream_*.log
+test_person.jpg
+*_backup.py
+*.hef

@@ -17,6 +17,6 @@ Also record Raspberry Pi OS, Hailo runtime/software and HEF model, RealSense fir
 
 ## Verification
 
-The field checklist describes staged dry and hardware procedures. The hover test is a hardware flight-test utility, not an automated unit test. The repository currently has no isolated control-logic test suite; syntax checks do not verify Offboard behavior or flight safety.
+The field checklist describes staged dry and hardware checks. The previously referenced hover-test utility is absent from `main`, so a verified takeoff/hover/landing procedure must be established separately. The repository currently has no isolated control-logic test suite; syntax checks do not verify Offboard behavior or flight safety.
 
 A lightweight CI job compiles the Python sources without importing hardware libraries or connecting to PX4. It catches syntax errors only; hardware testing remains manual and staged.

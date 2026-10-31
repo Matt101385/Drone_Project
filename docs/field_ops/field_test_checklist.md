@@ -43,7 +43,6 @@ Main files:
 ```text
 src/follow_drone.py
 src/hailo_person_detector.py
-tests/hardware/takeoff_hover_land_test.py
 docs/field_ops/field_test_checklist.md
 ```
 
@@ -63,7 +62,7 @@ Do not run numbered development filenames such as `11_follow_safe.py` or `13_tak
 * The Raspberry Pi is not powered through the Pixhawk TELEM2 port.
 * Pixhawk serial cable is connected to the Raspberry Pi.
 * RC transmitter is powered on and bound.
-* Verify actual TELEM2 baud: main-program default is 921600, while hover test/reference say 57600. Confirm the configured connection before proceeding.
+* Verify actual TELEM2 baud: the main-program default is 921600; the reference records 57600 from an earlier setup. Confirm the configured connection before proceeding.
 * QGroundControl can see the vehicle.
 * Position, GPS, home-position, and battery checks are healthy.
 * Test area is open, flat, and far from people and obstacles.
@@ -91,8 +90,7 @@ Confirm the main files are present:
 ```bash
 ls -1 \
   src/follow_drone.py \
-  src/hailo_person_detector.py \
-  tests/hardware/takeoff_hover_land_test.py
+  src/hailo_person_detector.py
 ```
 
 Check Python syntax:
@@ -100,8 +98,7 @@ Check Python syntax:
 ```bash
 python -m py_compile \
   src/follow_drone.py \
-  src/hailo_person_detector.py \
-  tests/hardware/takeoff_hover_land_test.py
+  src/hailo_person_detector.py
 ```
 
 Confirm the YOLO11n Hailo model exists:
@@ -153,7 +150,7 @@ Expected:
 * WebRTC video loads.
 * A red box appears around a detected person.
 * Clicking a person locks the target.
-* `Locked YES` appears.
+* The video shows `LOCKED` and the status panel shows `Locked: True`.
 * Terminal prints `[DRY]`.
 * No real Pixhawk movement commands are sent.
 * No repeated `HAILO ERROR` messages appear.
@@ -176,37 +173,15 @@ Pass criteria:
 
 * The selected person remains locked.
 * The target does not unexpectedly switch to another person.
-* Forward/yaw visual guidance changes smoothly; the controller converts it to bounded position/yaw setpoints.
+* Forward/yaw visual guidance changes smoothly. The controller uses distance and image-position errors to generate bounded position/yaw targets; the displayed forward guidance is not a flight-speed limit.
 * Commands return toward zero when the target is centered and near the target distance.
 * Loss of valid depth does not produce unsafe commands.
-* With no valid target, visual guidance is zero and the controller holds the last complete N/E/D/yaw target.
+* With no valid target, visual guidance is zero. The controller latches the latest available N/E position once, retains the entry D target and retains the previous yaw target.
 * No rapid repeated switching occurs between maximum speed and zero.
 
 ### 3. Outdoor Takeoff, Hover, and Land Test
 
-Complete this test before any real following test:
-
-```bash
-cd ~/Drone_Project
-source .venv/bin/activate
-
-python -u tests/hardware/takeoff_hover_land_test.py \
-  --addr serial:///dev/serial0:57600 \
-  --alt 2.5 \
-  --hover 8 \
-  --real
-```
-
-Expected:
-
-* Connects to the Pixhawk.
-* Waits for required health checks.
-* Arms only after the required confirmation.
-* Takes off to approximately 2.5 m.
-* Holds for approximately 8 seconds.
-* Lands automatically.
-
-Keep the RC transmitter ready to switch to Position or Stabilized mode immediately.
+The previously referenced `tests/hardware/takeoff_hover_land_test.py` is not present on `main`. Do not use the old command as a current procedure. Establish and independently verify a suitable takeoff, hover, and landing procedure before attempting this stage. The previous script is available in Git history for inspection, but its presence there does not establish that it is suitable for the current vehicle.
 
 ### 4. Outdoor Follow Dry Run
 
@@ -221,7 +196,7 @@ FOLLOW_REAL=0 python -u src/follow_drone.py
 Expected:
 
 * Target can be selected by clicking.
-* `Locked YES` remains stable.
+* `Locked: True` remains stable when the intended person is selected.
 * Person detection remains reliable in outdoor lighting.
 * Depth measurements remain available.
 * Forward/yaw visual guidance and position-follow status look reasonable.
@@ -230,7 +205,7 @@ Expected:
 
 ### 5. Real Follow Short Test
 
-Only proceed after all earlier tests pass.
+Only proceed after all earlier tests pass and the unresolved control issues in the README have been reviewed and validated. `FOLLOW_REAL=1` automatically requests Offboard after connection and initial pose acquisition; it does not wait for a separate confirmation.
 
 Use a large, open test area. Start with short, slow movement:
 
@@ -280,7 +255,6 @@ Keep these current files in the repository:
 ```text
 src/follow_drone.py
 src/hailo_person_detector.py
-tests/hardware/takeoff_hover_land_test.py
 docs/field_ops/field_test_checklist.md
 README.md
 docs/reference/lidar_reference.md
