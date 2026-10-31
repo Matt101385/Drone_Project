@@ -1273,6 +1273,18 @@ def camera_loop():
             if bbox_cx_pct is not None: cv2.putText(color_image, f"BBOX X {bbox_cx_pct:.0f}%  BOT {bbox_bottom_pct:.0f}%", (12, 240), cv2.FONT_HERSHEY_SIMPLEX, 0.65, (0, 255, 255), 2)
             cv2.putText(color_image, f"D-RATE {filtered_distance_rate_m_s:+.2f} m/s", (12, 270), cv2.FONT_HERSHEY_SIMPLEX, 0.65, (255, 255, 255), 2)
 
+            # Show the camera processing rate in the video overlay.
+            cv2.putText(
+                color_image,
+                f"PROCESS FPS: {fps_est:.1f}",
+                (12, 305),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.75,
+                (0, 255, 0),
+                2,
+                cv2.LINE_AA,
+            )
+
             with vision_lock:
                 latest_frame = color_image.copy()
 
