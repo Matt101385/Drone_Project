@@ -1,0 +1,25 @@
+name: Stage4 matched-source contract
+
+on:
+  push:
+    paths:
+      - 'experiments/stage4/**'
+      - '.github/workflows/stage4-matched-contract.yml'
+  pull_request:
+    paths:
+      - 'experiments/stage4/**'
+      - '.github/workflows/stage4-matched-contract.yml'
+
+jobs:
+  matched-source:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: '3.13'
+      - name: Verify matched source and Python syntax
+        run: |
+          python -m py_compile experiments/stage4/position_matched.py experiments/stage4/velocity_matched.py experiments/stage4/test_matched_source.py
+          python experiments/stage4/test_matched_source.py
